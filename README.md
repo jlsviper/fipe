@@ -8,13 +8,22 @@ The architecture spec is the source of design intent; this repo implements it.
 | Path | What it is |
 | --- | --- |
 | `isa/` | The ISA, defined once: types, field positions, strict encode/decode. Every other part uses it. |
+| `spec/` | Protocol timing specs, the single source of truth for "correct" (I2C standard mode so far). |
+| `checker/` | Runs firmware into its event stream, checks it against a spec with the skews symbolic, compiles rules into monitor slots. Also holds the firmware. |
 | `model/` | Reference models (golden), written independently of the RTL. |
 | `hw/` | Hardcaml RTL. |
 | `test/` | Expect tests: exhaustive ISA round-trip, RTL vs model differential tests, waveforms. |
 | `bin/gen_verilog.ml` | Writes `src/*.v` for the Tiny Tapeout template. |
 | `src/` | Generated Verilog. Do not edit by hand. |
 
-## Status (milestone 1)
+## Status
+
+**Checker v0 (spec v0.3).** The I2C master write firmware is checked against all eight
+I2C standard-mode rules plus the hardware order invariant, with skews K1 (SCL) and K2 (SDA)
+symbolic. Safe region: -5 <= K2 - K1 <= 5; START and STOP are the tightest rules (400 ns).
+The test prints the predicted shmoo. All eight rules compile into monitor slots.
+
+**Milestone 1.**
 
 - ISA v0.2 encodings: 10,614 legal words; every one round-trips (checked exhaustively over all 2^16).
 - Event queue (spec v0.2: committed entries, 2 fires per cycle, LATE, ORDER, window check):
@@ -54,10 +63,10 @@ dune exec bin/gen_verilog.exe # regenerate src/*.v
 An expect test that fails prints a diff of what changed. Waveform tests print ASCII waveforms,
 so a timing change shows up in code review as a picture.
 
-## Next (milestone 2, to Nov 1)
+## Next (to the Nov 15 gate: I2C end to end in simulation)
 
-1. Timebase + skew registers, and the enqueue stage (S + dt, snapshot K, resolve the value).
-2. One sequencer: fetch, decode from `Isa.Field`, EVT/DLY/JMP/SET, lead-bound stall at 2^22.
-3. Reference model of the sequencer; random-program differential test against the RTL.
-4. UART transmit from firmware as the first end-to-end test.
-5. Tiny Tapeout wrapper `tt_um_fipe` generated from Hardcaml, then the first CI run on the template.
+1. Enqueue stage and one sequencer in Hardcaml; its reference model; differential tests.
+2. Run the I2C firmware on the RTL and confirm its edges match the checker's event stream.
+3. Timing-monitor slots in Hardcaml, configured by the monitor compiler.
+4. An I2C EEPROM model with configurable timing, so injected faults have a realistic target.
+5. The measured-datasheet sweep, in simulation, compared against the predicted shmoo.

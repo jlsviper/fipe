@@ -14,6 +14,17 @@ struct
   let of_int i = List.nth X.all_in_order i
 end
 
+(* Coder mode register (SET Coder_mode imm). Bits [1:0] select the line code;
+   bit 2 inverts; bit 3 selects open-drain output, where a 1 bit releases the
+   pin (pulled high externally) instead of driving it, as I2C requires. *)
+module Coder_mode = struct
+  let nrz = 0
+  let nrzi = 1
+  let manchester = 2
+  let invert = 4
+  let open_drain = 8
+end
+
 module Act = struct
   module T = struct
     type t =
