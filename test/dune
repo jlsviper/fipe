@@ -1,0 +1,5 @@
+(library
+ (name fipe_test)
+ (libraries base stdio hardcaml hardcaml_waveterm fipe_isa fipe_model fipe_hw)
+ (inline_tests)
+ (preprocess (pps ppx_jane)))

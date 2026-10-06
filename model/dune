@@ -1,0 +1,4 @@
+(library
+ (name fipe_model)
+ (libraries base)
+ (preprocess (pps ppx_jane)))

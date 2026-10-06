@@ -1,0 +1,11 @@
+{
+  "name": "fipe (Hardcaml v0.16, OCaml 4.14)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "hostRequirements": { "cpus": 2, "memory": "4gb" },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ocamllabs.ocaml-platform"]
+    }
+  }
+}

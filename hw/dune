@@ -1,0 +1,4 @@
+(library
+ (name fipe_hw)
+ (libraries base hardcaml fipe_isa)
+ (preprocess (pps ppx_jane ppx_deriving_hardcaml)))
