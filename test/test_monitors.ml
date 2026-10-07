@@ -88,7 +88,7 @@ let%expect_test "one slot: pulse width must be 10..20 cycles" =
 
 module Lsim = Cyclesim.With_interface (L.I) (L.O)
 
-let i2c_program = C.Firmware.i2c_write ~bytes:3
+let i2c_program = C.Firmware.i2c_write ~bytes:3 ()
 let i2c_fifo = C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
 let pin_of = function "SDA" -> 0 | "SCL" -> 1 | p -> raise_s [%message "pin" p]
 let rules = Spec.I2c_standard_mode.spec.rules

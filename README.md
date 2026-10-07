@@ -18,6 +18,23 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**Measured datasheet (the Nov 15 gate, met in simulation).** `test/test_sweep.ml` sweeps one
+skew knob per I2C rule against `model/i2c_eeprom.ml`, a cycle-level EEPROM with realistic
+failure mechanisms, and recovers every hidden device parameter from the ACK bits the chip
+samples itself (29 transactions, binary search):
+
+| Rule     | Spec      | Device needs (measured) | Hidden truth |
+|----------|-----------|-------------------------|--------------|
+| t_HD_STA | >= 4000 ns | 880 to 960 ns          | 900 ns       |
+| t_SU_STO | >= 4000 ns | 960 to 1040 ns         | 1000 ns      |
+| t_HD_DAT | >= 0 ns    | 240 to 320 ns          | 300 ns       |
+| t_SU_DAT | >= 250 ns  | 80 to 160 ns           | 100 ns       |
+
+The t_HD_DAT row flags the part as non-compliant: it needs ~300 ns of hold the spec does not
+guarantee from the bus. Pass/fail uses ACK polling (`Firmware.i2c_write_and_poll`), so a missed
+STOP cannot pass silently. `checker/asm.ml` is a minimal labelled assembler; the core now has
+synchronized inputs and reports sampled bits.
+
 **On-time check and timing monitors (Oct 7).**
 
 - `checker/ontime.ml`: a cycle model of instruction issue and queue firing. Every RTL run
@@ -57,6 +74,47 @@ The test prints the predicted shmoo. All eight rules compile into monitor slots.
   0 mismatches against the reference model over 25,000 random cycles, including runs across the
   24-bit timer wrap, with every fault class exercised.
 - Synthesized area of the real queue: 17,595 um^2, 1,294 cells (IHP sg13cmos5l, typical corner).
+
+## Setup: GitHub Codespaces (recommended)
+
+Push this repo to GitHub, then Code > Codespaces > Create codespace on main.
+`.devcontainer/setup.sh` installs the exact toolchain the code was tested with
+(Ubuntu 24.04, OCaml 4.14.1, Hardcaml v0.16, yosys) and finishes by running the tests.
+The first build takes about 15 to 30 minutes; after that the codespace starts in seconds.
+Stop the codespace when you are done so it does not use your free hours.
+
+## Setup: local macOS (optional)
+
+Homebrew no longer fully supports macOS 14, so local setup may fail. If you try it,
+pin the same versions as the codespace:
+
+```sh
+opam switch create fipe 4.14.2
+eval $(opam env --switch=fipe)
+opam install -y dune hardcaml.v0.16.0 hardcaml_waveterm.v0.16.0 \
+  ppx_deriving_hardcaml.v0.16.0 ppx_jane.v0.16.0 ppx_expect.v0.16.0
+```
+
+## Everyday commands
+
+```sh
+dune build                    # compile everything
+dune runtest                  # run all tests; silence means pass
+dune promote                  # accept new expected output after an intended change
+dune exec bin/gen_verilog.exe # regenerate src/*.v
+```
+
+An expect test that fails prints a diff of what changed. Waveform tests print ASCII waveforms,
+so a timing change shows up in code review as a picture.
+
+## Next
+
+1. Host SPI port and configuration registers; Tiny Tapeout top (`tt_um_fipe`); first full GDS
+   (settles clock target, tile size, program memory choice).
+2. Device-side monitors: count an edge only while our own driver is released, so the monitors
+   measure the device's outputs (ACK delay, clock stretching).
+3. Area: latch-based program memory, monitor trims.
+4. Read-back verification, UART and SPI firmware, formal properties.
 
 ## Setup: GitHub Codespaces (recommended)
 

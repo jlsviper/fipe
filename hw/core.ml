@@ -28,6 +28,7 @@ module I = struct
     ; cfg_k1 : 'a [@bits 8]
     ; cfg_k2 : 'a [@bits 8]
     ; cfg_k3 : 'a [@bits 8]
+    ; pins_in : 'a [@bits n_pins] (* bus levels, asynchronous *)
     }
   [@@deriving sexp_of, hardcaml]
 end
@@ -46,6 +47,8 @@ module O = struct
     ; fire1_valid : 'a
     ; fire1_pin : 'a [@bits Event_queue.pin_bits]
     ; fire1_value : 'a [@bits Event_queue.value_bits]
+    ; sample_valid : 'a (* a sample event fired this cycle *)
+    ; sample_bit : 'a (* the synchronized level it read *)
     ; late : 'a
     ; order_err : 'a
     ; window_err : 'a
@@ -114,6 +117,12 @@ let create (i : _ I.t) : _ O.t =
       oe <== e1;
       out_q, oe_q)
   in
+  (* samples read the synchronized inputs (spec v0.2, input synchronization) *)
+  let synced = reg spec (reg spec i.pins_in) in
+  let is_sample v = v ==:. Sequencer.Value.sample in
+  let samp0 = q.fire0_valid &: is_sample q.fire0_value in
+  let samp1 = q.fire1_valid &: is_sample q.fire1_value in
+  let bit_at p = mux p (bits_lsb synced) in
   let sticky x = reg_fb spec ~width:1 ~f:(fun q -> mux2 i.start gnd (q |: x)) in
   { t_now
   ; pins_out = concat_lsb (List.map pins ~f:fst)
@@ -127,6 +136,8 @@ let create (i : _ I.t) : _ O.t =
   ; fire1_valid = q.fire1_valid
   ; fire1_pin = q.fire1_pin
   ; fire1_value = q.fire1_value
+  ; sample_valid = samp0 |: samp1
+  ; sample_bit = mux2 samp0 (bit_at q.fire0_pin) (bit_at q.fire1_pin)
   ; late = sticky (q.fire0_late |: q.fire1_late)
   ; order_err = sticky q.order_err
   ; window_err = sticky q.window_err

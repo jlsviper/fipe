@@ -10,7 +10,7 @@ let events () =
   C.Exec.run
     ~pins:C.Firmware.i2c_pins
     ~fifo:C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
-    (C.Firmware.i2c_write ~bytes:3)
+    (C.Firmware.i2c_write ~bytes:3 ())
   |> Or_error.ok_exn
 ;;
 
@@ -47,7 +47,7 @@ let%expect_test "predicted shmoo over K1 (SCL) and K2 (SDA)" =
     C.Exec.run_traced
       ~pins:C.Firmware.i2c_pins
       ~fifo:C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
-      (C.Firmware.i2c_write ~bytes:3)
+      (C.Firmware.i2c_write ~bytes:3 ())
     |> Or_error.ok_exn
   in
   let ev = Array.of_list events in
@@ -146,7 +146,7 @@ let%expect_test "on-time: how far ahead of its due time each event is queued" =
     C.Exec.run_traced
       ~pins:C.Firmware.i2c_pins
       ~fifo:C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
-      (C.Firmware.i2c_write ~bytes:3)
+      (C.Firmware.i2c_write ~bytes:3 ())
     |> Or_error.ok_exn
   in
   let r = C.Ontime.run ~lead:64 ~k:(fun _ -> 0) events trace in

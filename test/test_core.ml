@@ -127,7 +127,7 @@ let predicted_late ~k events trace =
   List.exists (C.Ontime.simulate ~lead:start_lead ~k events trace) ~f:(fun f -> f.late)
 ;;
 
-let i2c_program = C.Firmware.i2c_write ~bytes:3
+let i2c_program = C.Firmware.i2c_write ~bytes:3 ()
 let i2c_fifo = C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
 
 let i2c_events, i2c_trace =
