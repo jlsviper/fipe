@@ -5,7 +5,7 @@ set -euo pipefail
 
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-  ocaml opam build-essential m4 unzip rsync git git-lfs pkg-config libgmp-dev yosys
+  ocaml opam build-essential m4 unzip rsync git git-lfs pkg-config libgmp-dev yosys verilator iverilog python3-pip
 
 export OPAMYES=1
 opam init --bare --disable-sandboxing -n
@@ -20,6 +20,9 @@ opam install ocaml-lsp-server ocamlformat || echo "editor tools skipped"
 
 grep -q 'opam env --switch=fipe' ~/.bashrc || \
   echo 'eval "$(opam env --switch=fipe)"' >> ~/.bashrc
+
+# cocotb, for the Tiny Tapeout smoke test in test/
+pip3 install --break-system-packages -r test/requirements.txt || echo "cocotb skipped"
 
 dune build
 dune runtest && echo "fipe: all tests pass"

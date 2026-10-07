@@ -103,3 +103,23 @@ module Hw = struct
     }
   ;;
 end
+
+(* The three configuration words for a slot in the host register map
+   (see hw/tt_top.ml): A = triggers, B = min/max cycles, C = enables. *)
+let words (s : Hw.t) =
+  let b x = if x then 1 else 0 in
+  let trig (t : Hw.trig) =
+    t.pin lor (t.edge lsl 3) lor (b t.qen lsl 5) lor (t.qpin lsl 6) lor (b t.qlvl lsl 9)
+  in
+  let none = { Hw.pin = 0; edge = 3; qen = false; qpin = 0; qlvl = false } in
+  let a =
+    b s.keep_first
+    lor (trig s.start lsl 1)
+    lor (trig s.stop lsl 11)
+    lor (b (Option.is_some s.abort) lsl 21)
+    lor (trig (Option.value s.abort ~default:none) lsl 22)
+  in
+  let bw = Option.value s.min_cyc ~default:0 lor (Option.value s.max_cyc ~default:0 lsl 16) in
+  let c = 1 lor (b (Option.is_some s.min_cyc) lsl 1) lor (b (Option.is_some s.max_cyc) lsl 2) in
+  a, bw, c
+;;

@@ -1,0 +1,31 @@
+name: ocaml
+# The real regression: ISA, checker, cycle model, RTL vs models, monitors,
+# measured-datasheet sweep, full chip over its pins. Also fails if the
+# committed Verilog in src/ was not regenerated after a Hardcaml change.
+on: [push, workflow_dispatch]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev pkg-config
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 4.14
+          dune-cache: true
+
+      - name: Libraries (pinned to the versions the code is tested with)
+        run: >
+          opam install -y dune hardcaml.v0.16.0 hardcaml_waveterm.v0.16.0
+          ppx_deriving_hardcaml.v0.16.0 ppx_jane.v0.16.0 ppx_expect.v0.16.0
+
+      - name: dune runtest
+        run: opam exec -- dune runtest
+
+      - name: Generated Verilog matches the Hardcaml source
+        run: |
+          opam exec -- dune exec bin/gen_verilog.exe
+          git diff --exit-code src/

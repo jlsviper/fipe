@@ -1,0 +1,56 @@
+# Tiny Tapeout project information
+project:
+  title:        "FIPE: fault-injecting protocol emulator"
+  author:       "Jack"
+  discord:      ""
+  description:  "Protocol emulator that audits both sides of the wire: spec-checked timing, live timing monitors, measured datasheets"
+  language:     "Hardcaml (OCaml), generated Verilog"
+  clock_hz:     50000000
+
+  # How many tiles your design occupies? A single tile is about 167x108 uM.
+  tiles: "6x4"          # Jane Street protocol emulator competition size
+
+  # Your top module name must start with "tt_um_". Make it unique by including your github username:
+  top_module:  "tt_um_jlsviper_fipe"
+
+  # List your project's source files here.
+  # Source files must be in ./src and you must list each source file separately, one per line.
+  # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
+  # This file is generated from Hardcaml: dune exec bin/gen_verilog.exe
+  source_files:
+    - "tt_um_jlsviper_fipe.v"
+
+# The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
+pinout:
+  # Inputs
+  ui[0]: "CFG_SCK"
+  ui[1]: "CFG_CS_N"
+  ui[2]: "CFG_MOSI"
+  ui[3]: "IN0"
+  ui[4]: "IN1"
+  ui[5]: "IN2"
+  ui[6]: "IN3"
+  ui[7]: "IN4"
+
+  # Outputs
+  uo[0]: "HALTED"
+  uo[1]: "LATE"
+  uo[2]: "ORDER"
+  uo[3]: "MON_VIOL"
+  uo[4]: "SAMPLE_VALID"
+  uo[5]: "SAMPLE_BIT"
+  uo[6]: "TRIG_OUT"
+  uo[7]: "CFG_MISO"
+
+  # Bidirectional pins
+  uio[0]: "P0"
+  uio[1]: "P1"
+  uio[2]: "P2"
+  uio[3]: "P3"
+  uio[4]: "P4"
+  uio[5]: "P5"
+  uio[6]: "P6"
+  uio[7]: "P7"
+
+# Do not change!
+yaml_version: 6

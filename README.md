@@ -9,16 +9,29 @@ The architecture spec is the source of design intent; this repo implements it.
 | --- | --- |
 | `isa/` | The ISA, defined once: types, field positions, strict encode/decode. Every other part uses it. |
 | `spec/` | Protocol timing specs, the single source of truth for "correct" (I2C standard mode so far). |
-| `checker/` | Runs firmware into its event stream, checks it against a spec with the skews symbolic, compiles rules into monitor slots. Also holds the firmware. |
-| `model/` | Reference models (golden), written independently of the RTL. |
-| `hw/` | Hardcaml RTL. |
-| `test/` | Expect tests: exhaustive ISA round-trip, RTL vs model differential tests, waveforms. |
-| `bin/gen_verilog.ml` | Writes `src/*.v` for the Tiny Tapeout template. |
-| `src/` | Generated Verilog. Do not edit by hand. |
+| `checker/` | Executor, symbolic and concrete checker, on-time cycle model, monitor compiler, assembler, firmware. |
+| `model/` | Reference models: event queue, I2C EEPROM with realistic failure mechanisms. |
+| `hw/` | Hardcaml RTL: event queue, sequencer, core, monitors, host SPI, Tiny Tapeout top. |
+| `tests/` | The OCaml regression (`dune runtest`). |
+| `bin/gen_verilog.ml` | Writes `src/tt_um_jlsviper_fipe.v`. `--components` also writes blocks to `build/`. |
+| `src/` | Generated Verilog plus the Tiny Tapeout flow config. Do not edit the `.v` by hand. |
+| `test/` | Tiny Tapeout's cocotb smoke test (also runs on the gate-level netlist). |
+| `info.yaml`, `docs/info.md` | Tiny Tapeout project metadata and datasheet. |
+| `.github/workflows/` | `gds` (RTL to GDS, precheck, gate-level test), `test` (cocotb), `docs`, `ocaml` (our regression). |
 
 ## Status
 
-**Measured datasheet (the Nov 15 gate, met in simulation).** `test/test_sweep.ml` sweeps one
+**Tiny Tapeout integration.** `hw/tt_top.ml` generates `tt_um_jlsviper_fipe` (6x4 tiles,
+50 MHz): host SPI port, register map, 4-deep host FIFO, sample log, monitors behind registers.
+
+- Full chip over its pins only (`tests/test_tt_top.ml`): SPI loads firmware and monitor
+  configuration, an EEPROM on uio acknowledges, the chip logs `0001`, the device stores 0x5A.
+  The monitors measure the device's own ACK edge (t_SU_DAT minimum 192 cycles).
+- Verilator lint with LibreLane's exact flags: 0 errors, latches or multiple drivers.
+- cocotb smoke test passes under Icarus; it also runs on the gate-level netlist in CI.
+- Synthesized area: 221,520 um^2 in 13,445 cells, 24% of the 916,214 um^2 6x4 die.
+
+**Measured datasheet (the Nov 15 gate, met in simulation).** `tests/test_sweep.ml` sweeps one
 skew knob per I2C rule against `model/i2c_eeprom.ml`, a cycle-level EEPROM with realistic
 failure mechanisms, and recovers every hidden device parameter from the ACK bits the chip
 samples itself (29 transactions, binary search):
@@ -35,7 +48,7 @@ guarantee from the bus. Pass/fail uses ACK polling (`Firmware.i2c_write_and_poll
 STOP cannot pass silently. `checker/asm.ml` is a minimal labelled assembler; the core now has
 synchronized inputs and reports sampled bits.
 
-**On-time check and timing monitors (Oct 7).**
+**On-time check and timing monitors.**
 
 - `checker/ontime.ml`: a cycle model of instruction issue and queue firing. Every RTL run
   matches it cycle for cycle, late events included: 207 on time, 36 order violations,
@@ -50,7 +63,7 @@ synchronized inputs and reports sampled bits.
   and a PATTERN validity condition on its symbolic ranges.
 - Monitors area: 34,534 um^2 (twice the estimate, before config registers). Trims planned.
 
-**Sequencer and core (Oct 6).** One sequencer with the enqueue stage, decoded straight from
+**Sequencer and core.** One sequencer with the enqueue stage, decoded straight from
 `Isa.Field`, runs on the event queue with a timebase, program memory and pin drivers
 (`hw/sequencer.ml`, `hw/core.ml`). The checker's executor is the golden model:
 
@@ -101,7 +114,8 @@ opam install -y dune hardcaml.v0.16.0 hardcaml_waveterm.v0.16.0 \
 dune build                    # compile everything
 dune runtest                  # run all tests; silence means pass
 dune promote                  # accept new expected output after an intended change
-dune exec bin/gen_verilog.exe # regenerate src/*.v
+dune exec bin/gen_verilog.exe # regenerate src/*.v (CI fails if you forget)
+cd test && make               # Tiny Tapeout cocotb smoke test (needs iverilog + cocotb)
 ```
 
 An expect test that fails prints a diff of what changed. Waveform tests print ASCII waveforms,
@@ -109,51 +123,8 @@ so a timing change shows up in code review as a picture.
 
 ## Next
 
-1. Host SPI port and configuration registers; Tiny Tapeout top (`tt_um_fipe`); first full GDS
-   (settles clock target, tile size, program memory choice).
+1. First full GDS on GitHub Actions: timing at 50 MHz, routing, precheck, gate-level test.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).
 3. Area: latch-based program memory, monitor trims.
 4. Read-back verification, UART and SPI firmware, formal properties.
-
-## Setup: GitHub Codespaces (recommended)
-
-Push this repo to GitHub, then Code > Codespaces > Create codespace on main.
-`.devcontainer/setup.sh` installs the exact toolchain the code was tested with
-(Ubuntu 24.04, OCaml 4.14.1, Hardcaml v0.16, yosys) and finishes by running the tests.
-The first build takes about 15 to 30 minutes; after that the codespace starts in seconds.
-Stop the codespace when you are done so it does not use your free hours.
-
-## Setup: local macOS (optional)
-
-Homebrew no longer fully supports macOS 14, so local setup may fail. If you try it,
-pin the same versions as the codespace:
-
-```sh
-opam switch create fipe 4.14.2
-eval $(opam env --switch=fipe)
-opam install -y dune hardcaml.v0.16.0 hardcaml_waveterm.v0.16.0 \
-  ppx_deriving_hardcaml.v0.16.0 ppx_jane.v0.16.0 ppx_expect.v0.16.0
-```
-
-## Everyday commands
-
-```sh
-dune build                    # compile everything
-dune runtest                  # run all tests; silence means pass
-dune promote                  # accept new expected output after an intended change
-dune exec bin/gen_verilog.exe # regenerate src/*.v
-```
-
-An expect test that fails prints a diff of what changed. Waveform tests print ASCII waveforms,
-so a timing change shows up in code review as a picture.
-
-## Next (to the Nov 15 gate: I2C end to end in simulation)
-
-1. ~~Enqueue stage and one sequencer; differential tests against the executor.~~ Done.
-2. ~~Run the I2C firmware on the RTL; edges match the checker exactly.~~ Done.
-3. ~~On-time check in the checker.~~ Done.
-4. ~~Timing-monitor slots in Hardcaml, configured by the monitor compiler.~~ Done.
-5. An I2C EEPROM model with configurable timing, so injected faults have a realistic target.
-6. The measured-datasheet sweep, in simulation, compared against the predicted shmoo.
-7. Trim monitor area; add configuration registers behind the host port.
