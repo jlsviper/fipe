@@ -12,5 +12,6 @@ let write path circuit =
 
 let () =
   write "src/fipe_event_queue.v" (Fipe_hw.Event_queue.circuit ());
-  write "src/fipe_core.v" (Fipe_hw.Core.circuit ())
+  write "src/fipe_core.v" (Fipe_hw.Core.circuit ());
+  write "src/fipe_monitors.v" (Fipe_hw.Monitors.circuit ())
 ;;

@@ -112,11 +112,26 @@ let order_violated ~k (events : C.Exec.event list) =
   go events
 ;;
 
+(* Fires predicted by the on-time cycle model, in RTL terms. *)
+let predicted_fires ~t_start ~pin_of ~k (events : C.Exec.event list) trace =
+  let ev = Array.of_list events in
+  C.Ontime.simulate ~lead:start_lead ~k events trace
+  |> List.map ~f:(fun (f : C.Ontime.fired) ->
+    { cycle = (t_start + f.t) land mask
+    ; pin = pin_of ev.(f.seq).pin
+    ; value = value_code ev.(f.seq).value
+    })
+;;
+
+let predicted_late ~k events trace =
+  List.exists (C.Ontime.simulate ~lead:start_lead ~k events trace) ~f:(fun f -> f.late)
+;;
+
 let i2c_program = C.Firmware.i2c_write ~bytes:3
 let i2c_fifo = C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
 
-let i2c_events =
-  C.Exec.run ~pins:C.Firmware.i2c_pins ~fifo:i2c_fifo i2c_program |> Or_error.ok_exn
+let i2c_events, i2c_trace =
+  C.Exec.run_traced ~pins:C.Firmware.i2c_pins ~fifo:i2c_fifo i2c_program |> Or_error.ok_exn
 ;;
 
 let i2c_pin_of = function
@@ -158,50 +173,57 @@ let%expect_test "I2C firmware on the RTL fires every edge exactly where predicte
     transaction spans 13564 cycles = 271.28 us at 50 MHz |}]
 ;;
 
-(* Sweep the skews across the checker's ORDER boundaries. Where the checker
-   says the order invariant holds, the RTL must raise no flag and match the
-   prediction exactly; where it says the invariant breaks, the RTL must flag it. *)
-let%expect_test "skew sweep: RTL flags agree with the checker's ORDER predictions" =
+(* Sweep the skews across the checker's ORDER boundaries. The RTL must agree
+   with the checker on the ORDER flag, with the on-time model on the LATE flag,
+   and with the on-time model on every fire cycle, inside and outside the safe
+   region alike. *)
+let%expect_test "skew sweep: RTL agrees with the checker and the cycle model everywhere" =
   let points =
     [ 0, 0; 27, 27; 28, 28; -28, -28; -29, -29; 0, -10; 0, -11; 0, 52; 0, 53; 5, -5; -40, 10 ]
   in
-  printf "  K1   K2  predicted  rtl_order  rtl_late  exact\n";
+  printf "  K1   K2  order(pred/rtl)  late(pred/rtl)  fires identical\n";
   List.iter points ~f:(fun (k1, k2) ->
     let r =
       run_core ~k1 ~k2 ~data_pin:0 ~clk_pin:1 ~max_cycles:60_000 ~fifo:i2c_fifo i2c_program
     in
     let k = kfun ~k1 ~k2 in
-    let predicted = order_violated ~k i2c_events in
-    let exact =
-      List.equal equal_fired (expected ~t_start:r.t_start ~pin_of:i2c_pin_of ~k i2c_events) r.fires
+    let p_order = order_violated ~k i2c_events in
+    let p_late = predicted_late ~k i2c_events i2c_trace in
+    let same =
+      List.equal
+        equal_fired
+        (predicted_fires ~t_start:r.t_start ~pin_of:i2c_pin_of ~k i2c_events i2c_trace)
+        r.fires
     in
+    let ok = Bool.equal p_order r.order_err && Bool.equal p_late r.late && same in
     printf
-      "%4d %4d  %-9s  %-9b  %-8b  %b%s\n"
+      "%4d %4d  %-5b / %-5b    %-5b / %-5b   %b%s\n"
       k1
       k2
-      (if predicted then "VIOLATES" else "ok")
+      p_order
       r.order_err
+      p_late
       r.late
-      exact
-      (if Bool.equal predicted r.order_err then "" else "   <-- DISAGREE"));
+      same
+      (if ok then "" else "   <-- DISAGREE"));
   [%expect {|
-     K1   K2  predicted  rtl_order  rtl_late  exact
-      0    0  ok         false      false     true
-     27   27  ok         false      false     true
-     28   28  VIOLATES   true       true      false
-    -28  -28  ok         false      false     true
-    -29  -29  VIOLATES   true       true      false
-      0  -10  ok         false      false     true
-      0  -11  VIOLATES   true       true      false
-      0   52  ok         false      false     true
-      0   53  VIOLATES   true       true      false
-      5   -5  ok         false      false     true
-    -40   10  VIOLATES   true       true      false |}]
+     K1   K2  order(pred/rtl)  late(pred/rtl)  fires identical
+      0    0  false / false    false / false   true
+     27   27  false / false    false / false   true
+     28   28  true  / true     true  / true    true
+    -28  -28  false / false    false / false   true
+    -29  -29  true  / true     true  / true    true
+      0  -10  false / false    false / false   true
+      0  -11  true  / true     true  / true    true
+      0   52  false / false    false / false   true
+      0   53  true  / true     true  / true    true
+      5   -5  false / false    false / false   true
+    -40   10  true  / true     true  / true    true |}]
 ;;
 
 (* Random programs from the supported instruction subset, with random skews
    and pin assignments. Every run is compared against the executor. *)
-let gen_program rand =
+let gen_program ?(stress = false) rand =
   let len = 4 + Random.State.int rand 36 in
   let ri n = Random.State.int rand n in
   let acts = Isa.Act.[| Drive0; Drive1; Release; Toggle; Shift_out; Sample |] in
@@ -211,7 +233,13 @@ let gen_program rand =
     else (
       let r = ri 100 in
       if r < 50
-      then Isa.Evt { dt = ri 64; clk_pin = ri 2 = 1; cls = ri 4; act = acts.(ri 6) }
+      then
+        Isa.Evt
+          { dt = (if stress then ri 3 else ri 64)
+          ; clk_pin = ri 2 = 1
+          ; cls = ri 4
+          ; act = acts.(ri 6)
+          }
       else if r < 58
       then Dly { dt = ri 200 }
       else if r < 66
@@ -219,7 +247,7 @@ let gen_program rand =
       else if r < 71
       then Set { dst = Coder_mode; imm = [| 0; 4; 8; 12 |].(ri 4) }
       else if r < 75
-      then Set { dst = Prescale; imm = ri 3 }
+      then Set { dst = Prescale; imm = (if stress then 0 else ri 3) }
       else if r < 82
       then Pull { block = true }
       else if r < 90 && a > 0
@@ -227,20 +255,19 @@ let gen_program rand =
       else Nop))
 ;;
 
-let%expect_test "random programs: RTL vs executor" =
-  let rand = Random.State.make [| 42 |] in
+let random_campaign ~stress ~seed ~n =
+  let rand = Random.State.make [| seed |] in
   let tally = Hashtbl.create (module String) in
   let note k = Hashtbl.incr tally k in
-  for _ = 1 to 300 do
-    let program = gen_program rand in
+  for _ = 1 to n do
+    let program = gen_program ~stress rand in
     let fifo = List.init 64 ~f:(fun _ -> Random.State.bits rand land 0xFFFF_FFFF) in
     let pins = { C.Exec.data_pin = "D"; clk_pin = "C" } in
-    match C.Exec.run ~max_steps:5_000 ~pins ~fifo program with
-    | Error _ -> note "skipped: executor rejects (unbounded loop or empty FIFO)"
-    | Ok events ->
-      let k1 = Random.State.int rand 13 - 6
-      and k2 = Random.State.int rand 13 - 6
-      and k3 = Random.State.int rand 13 - 6 in
+    match C.Exec.run_traced ~max_steps:5_000 ~pins ~fifo program with
+    | Error _ -> note "skipped: executor rejects (unbounded loop)"
+    | Ok (events, trace) ->
+      let rk () = if stress then 0 else Random.State.int rand 13 - 6 in
+      let k1 = rk () and k2 = rk () and k3 = rk () in
       let k = function 1 -> k1 | 2 -> k2 | 3 -> k3 | _ -> 0 in
       let data_pin = Random.State.int rand 8 in
       let clk_pin = (data_pin + 1 + Random.State.int rand 7) % 8 in
@@ -249,24 +276,45 @@ let%expect_test "random programs: RTL vs executor" =
       let r =
         run_core ~k1 ~k2 ~k3 ~data_pin ~clk_pin ~max_cycles:(last + 20_000) ~fifo program
       in
-      let predicted = order_violated ~k events in
-      if not (Bool.equal predicted r.order_err)
-      then note "MISMATCH: order flag disagrees with prediction"
-      else if not r.halted
+      let p_order = order_violated ~k events in
+      let p_late = predicted_late ~k events trace in
+      let same =
+        List.equal equal_fired (predicted_fires ~t_start:r.t_start ~pin_of ~k events trace) r.fires
+      in
+      if not r.halted
       then note "MISMATCH: did not halt"
-      else if predicted
-      then note "order violation predicted and flagged"
-      else if r.late
-      then note "late: sequencer fell behind (on-time check not in checker v0 yet)"
-      else if List.equal equal_fired (expected ~t_start:r.t_start ~pin_of ~k events) r.fires
-      then note "exact match"
-      else note "MISMATCH: timing or values differ"
+      else if not (Bool.equal p_order r.order_err)
+      then note "MISMATCH: ORDER flag"
+      else if not (Bool.equal p_late r.late)
+      then note "MISMATCH: LATE flag"
+      else if not same
+      then note "MISMATCH: fire cycles"
+      else if p_order
+      then note "cycle-exact, order violation predicted and flagged"
+      else if p_late
+      then note "cycle-exact, late events predicted and flagged"
+      else note "cycle-exact, all on time"
   done;
   Hashtbl.to_alist tally
   |> List.sort ~compare:(fun (a, _) (b, _) -> String.compare a b)
-  |> List.iter ~f:(fun (k, v) -> printf "%4d  %s\n" v k);
+  |> List.iter ~f:(fun (k, v) -> printf "%4d  %s\n" v k)
+;;
+
+let%expect_test "random programs: RTL vs executor and cycle model" =
+  random_campaign ~stress:false ~seed:42 ~n:300;
   [%expect {|
-    207  exact match
-     36  order violation predicted and flagged
-     57  skipped: executor rejects (unbounded loop or empty FIFO) |}]
+    207  cycle-exact, all on time
+     36  cycle-exact, order violation predicted and flagged
+     57  skipped: executor rejects (unbounded loop) |}]
+;;
+
+(* Tiny dt values, no prescale and no skew, so ORDER always holds and the only
+   way to be late is the sequencer falling behind: the case only the on-time
+   model predicts. *)
+let%expect_test "stress programs: the sequencer falls behind, and the model knows when" =
+  random_campaign ~stress:true ~seed:7 ~n:300;
+  [%expect {|
+    118  cycle-exact, all on time
+    122  cycle-exact, late events predicted and flagged
+     60  skipped: executor rejects (unbounded loop) |}]
 ;;

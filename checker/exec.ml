@@ -30,6 +30,14 @@ type event =
   }
 [@@deriving sexp]
 
+(* One entry per executed instruction, in order: either the EVT that enqueued
+   event [seq], or any other instruction. The on-time check replays this
+   against a cycle model of the sequencer and queue. *)
+type step =
+  | Evt_step of int
+  | Plain
+[@@deriving sexp]
+
 type pins =
   { data_pin : string
   ; clk_pin : string
@@ -38,7 +46,7 @@ type pins =
 let bit_31 = 1 lsl 31
 let mask32 = (1 lsl 32) - 1
 
-let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
+let run_traced ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
   let open Or_error.Let_syntax in
   let pc = ref 0
   and x = ref 0
@@ -51,6 +59,7 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
   and fifo = ref fifo
   and steps = ref 0
   and events = Queue.create ()
+  and trace = Queue.create ()
   and level = Hashtbl.create (module String) in
   let committed pin = Hashtbl.find level pin |> Option.value ~default:Release in
   let emit ~cls ~pin value =
@@ -72,6 +81,7 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
       Int.incr steps;
       let here = !pc in
       pc := here + 1;
+      let n_before = Queue.length events in
       let%bind () =
         match program.(here) with
         | Nop -> Ok ()
@@ -146,8 +156,15 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
         | other ->
           Or_error.error_s [%message "unsupported in checker v0" (here : int) (other : Isa.t)]
       in
+      Queue.enqueue
+        trace
+        (if Queue.length events > n_before then Evt_step n_before else Plain);
       loop ())
   in
   let%map () = loop () in
-  Queue.to_list events
+  Queue.to_list events, Queue.to_list trace
+;;
+
+let run ?max_steps ~pins ~fifo program =
+  Or_error.map (run_traced ?max_steps ~pins ~fifo program) ~f:fst
 ;;

@@ -32,61 +32,83 @@ let%expect_test "I2C write: every rule, with the skew range where it holds" =
     ORDER     >= 0          3  K1 >= -28                  ok, margin 28 (2240 ns)
     ORDER     >= 0         29  K1 - K2 >= -52             ok, margin 52 (4160 ns)
     ORDER     >= 0          1  K2 >= -60                  ok, margin 60 (4800 ns)
-    ORDER     >= 0         29  K2 - K1 >= -10             ok, margin 10 (800 ns) |}]
+    ORDER     >= 0         29  K2 - K1 >= -10             ok, margin 10 (800 ns)
+    PATTERN   >= 1 unit    17  K1 - K2 >= -51             ok, margin 51 (4080 ns)
+    PATTERN   >= 1 unit    17  K2 - K1 >= -9              ok, margin 9 (720 ns) |}]
 ;;
 
 (* The predicted shmoo: which rule breaks first at each (K1, K2). K1 skews SCL
-   edges, K2 skews SDA edges, both in 80 ns units. The real chip will sweep the
-   same grid against a real EEPROM; this is what the checker says it must see. *)
+   edges, K2 skews SDA edges, both in 80 ns units. Each cell is computed in
+   concrete mode on the cycle model's exact fire times, so it holds even where
+   the waveform changes shape. O means the hardware itself raises ORDER or
+   LATE. The chip's measured sweep must reproduce this grid. *)
 let%expect_test "predicted shmoo over K1 (SCL) and K2 (SDA)" =
-  let fs = findings () in
-  let code (f : C.Check.finding) =
-    match f.name with
-    | "t_HD_DAT" -> 'H'
-    | "t_SU_DAT" -> 'S'
-    | "ORDER" -> 'O'
-    | "t_SU_STO" -> 'P'
+  let events, trace =
+    C.Exec.run_traced
+      ~pins:C.Firmware.i2c_pins
+      ~fifo:C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
+      (C.Firmware.i2c_write ~bytes:3)
+    |> Or_error.ok_exn
+  in
+  let ev = Array.of_list events in
+  let letter = function
     | "t_HD_STA" -> 'A'
     | "t_LOW" -> 'L'
+    | "t_HIGH" -> 'G'
+    | "t_SU_STA" -> 'U'
+    | "t_SU_DAT" -> 'S'
+    | "t_HD_DAT" -> 'H'
+    | "t_SU_STO" -> 'P'
+    | "t_BUF" -> 'B'
     | _ -> '?'
+  in
+  let cell k1 k2 =
+    let k = function 1 -> k1 | 2 -> k2 | _ -> 0 in
+    let fired = C.Ontime.simulate ~lead:64 ~k events trace in
+    if List.exists fired ~f:(fun f -> f.late)
+    then 'O'
+    else (
+      let fires = List.map fired ~f:(fun f -> f.t, ev.(f.seq)) in
+      match
+        List.find
+          (C.Check.concrete ~ns_per_cycle:20 Spec.I2c_standard_mode.spec fires)
+          ~f:(fun c -> c.violations > 0)
+      with
+      | None -> '.'
+      | Some c -> letter c.rule)
   in
   let ks = List.range ~stride:4 (-40) 41 in
   printf "K2\\K1 %s\n" (String.concat (List.map ks ~f:(fun k -> Printf.sprintf "%4d" k)));
   List.iter (List.rev ks) ~f:(fun k2 ->
     printf "%5d " k2;
-    List.iter ks ~f:(fun k1 ->
-      let k = function 1 -> k1 | 2 -> k2 | _ -> 0 in
-      let fail =
-        List.find fs ~f:(fun f -> not (C.Check.holds_at f (C.Check.Knob.eval f.knob ~k)))
-      in
-      printf "   %c" (match fail with None -> '.' | Some f -> code f));
+    List.iter ks ~f:(fun k1 -> printf "   %c" (cell k1 k2));
     printf "\n");
-  printf "\n. holds  H t_HD_DAT  S t_SU_DAT  A t_HD_STA  P t_SU_STO  L t_LOW  O hardware ORDER\n";
+  printf "\n. holds  A t_HD_STA  U t_SU_STA  H t_HD_DAT  P t_SU_STO  O hardware ORDER/LATE\n";
   [%expect {|
     K2\K1  -40 -36 -32 -28 -24 -20 -16 -12  -8  -4   0   4   8  12  16  20  24  28  32  36  40
-       40    A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   O   O
-       36    A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   O   O   O
-       32    A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   O   O   O   P
-       28    A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   .   O   O   P   H
-       24    A   A   A   A   A   A   A   A   A   A   A   A   A   A   A   .   .   O   P   H   H
-       20    A   A   A   A   A   A   A   A   A   A   A   A   A   A   .   .   .   P   H   H   H
-       16    A   A   A   A   A   A   A   A   A   A   A   A   A   .   .   .   P   H   H   H   H
-       12    A   A   A   A   A   A   A   A   A   A   A   A   .   .   .   P   H   H   H   H   H
-        8    A   A   A   A   A   A   A   A   A   A   A   .   .   .   P   H   H   H   H   H   H
-        4    A   A   A   A   A   A   A   A   A   A   .   .   .   P   H   H   H   H   H   H   H
-        0    A   A   A   A   A   A   A   A   A   .   .   .   P   H   H   H   H   H   H   H   H
-       -4    A   A   A   A   A   A   A   A   .   .   .   P   H   H   H   H   H   H   H   H   H
-       -8    A   A   A   A   A   A   A   .   .   .   P   H   H   H   H   H   H   H   H   H   H
-      -12    A   A   A   A   A   A   .   .   .   P   H   H   H   H   H   H   H   H   H   H   H
-      -16    A   A   A   A   A   .   .   .   P   H   H   H   H   H   H   H   H   H   H   H   H
-      -20    A   A   A   A   .   .   .   P   H   H   H   H   H   H   H   H   H   H   H   H   H
-      -24    A   A   A   .   .   .   P   H   H   H   H   H   H   H   H   H   H   H   H   H   H
-      -28    A   A   O   .   .   P   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H
-      -32    A   O   O   .   P   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H
-      -36    O   O   O   P   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H
-      -40    O   O   P   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H   H
+       40    O   O   O   O   O   O   O   A   A   A   A   A   A   A   A   A   A   O   O   O   O
+       36    O   O   O   O   O   O   A   A   A   A   A   A   A   A   A   A   A   O   O   O   O
+       32    O   O   O   O   O   A   A   A   A   A   A   A   A   A   A   A   A   O   O   O   O
+       28    O   O   O   O   A   A   A   A   A   A   A   A   A   A   A   A   .   O   O   O   O
+       24    O   O   O   A   A   A   A   A   A   A   A   A   A   A   A   .   .   O   O   O   O
+       20    O   O   O   A   A   A   A   A   A   A   A   A   A   A   .   .   .   O   O   O   O
+       16    O   O   O   A   A   A   A   A   A   A   A   A   A   .   .   .   P   O   O   O   O
+       12    O   O   O   A   A   A   A   A   A   A   A   A   .   .   .   P   O   O   O   O   O
+        8    O   O   O   A   A   A   A   A   A   A   A   .   .   .   P   O   O   O   O   O   O
+        4    O   O   O   A   A   A   A   A   A   A   .   .   .   P   O   O   O   O   O   O   O
+        0    O   O   O   A   A   A   A   A   A   .   .   .   P   O   O   O   O   O   O   O   O
+       -4    O   O   O   A   A   A   A   A   .   .   .   P   O   O   O   O   O   O   O   O   O
+       -8    O   O   O   A   A   A   A   .   .   .   P   O   O   O   O   O   O   O   O   O   O
+      -12    O   O   O   A   A   A   .   .   .   P   O   O   O   O   O   O   O   O   O   O   O
+      -16    O   O   O   A   A   .   .   .   P   O   O   O   O   O   O   O   O   O   O   O   O
+      -20    O   O   O   A   .   .   .   P   O   O   O   O   O   O   O   O   O   O   O   O   O
+      -24    O   O   O   .   .   .   P   O   O   O   O   O   O   O   O   O   O   O   O   O   O
+      -28    O   O   O   .   .   P   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O
+      -32    O   O   O   .   P   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O
+      -36    O   O   O   P   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O
+      -40    O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O   O
 
-    . holds  H t_HD_DAT  S t_SU_DAT  A t_HD_STA  P t_SU_STO  L t_LOW  O hardware ORDER |}]
+    . holds  A t_HD_STA  U t_SU_STA  H t_HD_DAT  P t_SU_STO  O hardware ORDER/LATE |}]
 ;;
 
 let%expect_test "the same spec compiled into timing-monitor slots" =
@@ -117,4 +139,27 @@ let%expect_test "a program the checker cannot analyse is reported, not guessed" 
   [%expect {|
     ("unsupported in checker v0" (here 0)
      (other (Wait (pin 0) (pol true) (timeout 0)))) |}]
+;;
+
+let%expect_test "on-time: how far ahead of its due time each event is queued" =
+  let events, trace =
+    C.Exec.run_traced
+      ~pins:C.Firmware.i2c_pins
+      ~fifo:C.Firmware.[ byte 0xA0; byte 0x00; byte 0x5A ]
+      (C.Firmware.i2c_write ~bytes:3)
+    |> Or_error.ok_exn
+  in
+  let r = C.Ontime.run ~lead:64 ~k:(fun _ -> 0) events trace in
+  let late = List.count r.fired ~f:(fun f -> f.late) in
+  (match C.Ontime.min_slack ~lead:64 ~k:(fun _ -> 0) events trace with
+   | Some (i, s) ->
+     printf
+       "events %d, late %d, minimum slack %d cycles (event %d, pc %d)\n"
+       (List.length events)
+       late
+       s
+       i
+       (List.nth_exn events i).pc
+   | None -> print_endline "no events");
+  [%expect {| events 91, late 0, minimum slack 58 cycles (event 1, pc 4) |}]
 ;;

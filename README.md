@@ -18,6 +18,21 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**On-time check and timing monitors (Oct 7).**
+
+- `checker/ontime.ml`: a cycle model of instruction issue and queue firing. Every RTL run
+  matches it cycle for cycle, late events included: 207 on time, 36 order violations,
+  and 122 stress programs where the sequencer falls behind. 0 mismatches.
+- `hw/monitors.ml`: four timing-monitor slots, loaded from rules compiled out of the spec.
+  `hw/loopback.ml` feeds the core's own I2C output back into them.
+- Monitors vs checker: 10 skew points x 8 rules, 0 disagreements. At K = 0 the monitors
+  measure every interval exactly as the checker predicts (the measured datasheet of our
+  own output).
+- The cross-check found a semantic gap: same-cycle edges on SDA and SCL are ambiguous
+  on the wire. The checker now has a concrete mode (ground truth, hardware semantics)
+  and a PATTERN validity condition on its symbolic ranges.
+- Monitors area: 34,534 um^2 (twice the estimate, before config registers). Trims planned.
+
 **Sequencer and core (Oct 6).** One sequencer with the enqueue stage, decoded straight from
 `Isa.Field`, runs on the event queue with a timebase, program memory and pin drivers
 (`hw/sequencer.ml`, `hw/core.ml`). The checker's executor is the golden model:
@@ -79,7 +94,8 @@ so a timing change shows up in code review as a picture.
 
 1. ~~Enqueue stage and one sequencer; differential tests against the executor.~~ Done.
 2. ~~Run the I2C firmware on the RTL; edges match the checker exactly.~~ Done.
-3. On-time check in the checker (worst-case cycles between events vs queued lead).
-4. Timing-monitor slots in Hardcaml, configured by the monitor compiler.
+3. ~~On-time check in the checker.~~ Done.
+4. ~~Timing-monitor slots in Hardcaml, configured by the monitor compiler.~~ Done.
 5. An I2C EEPROM model with configurable timing, so injected faults have a realistic target.
 6. The measured-datasheet sweep, in simulation, compared against the predicted shmoo.
+7. Trim monitor area; add configuration registers behind the host port.

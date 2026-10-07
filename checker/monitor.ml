@@ -56,3 +56,50 @@ let of_rule ~clk_hz (r : Spec.rule) =
   ; max_cycles = Option.map r.max_ns ~f:(fun n -> (n + ns_per_cycle - 1) / ns_per_cycle + 1)
   }
 ;;
+
+(* Register-level encoding of a slot, for loading into the hardware. *)
+module Hw = struct
+  type trig =
+    { pin : int
+    ; edge : int (* 0 rise, 1 fall, 2 any *)
+    ; qen : bool
+    ; qpin : int
+    ; qlvl : bool
+    }
+  [@@deriving sexp]
+
+  type t =
+    { start : trig
+    ; stop : trig
+    ; abort : trig option
+    ; keep_first : bool
+    ; min_cyc : int option
+    ; max_cyc : int option
+    }
+  [@@deriving sexp]
+
+  let trig ~pin_of (t : trigger) =
+    { pin = pin_of t.pin
+    ; edge =
+        (match t.edge with
+         | Rise -> 0
+         | Fall -> 1
+         | Any -> 2)
+    ; qen = Option.is_some t.qual
+    ; qpin = Option.value_map t.qual ~default:0 ~f:(fun (p, _) -> pin_of p)
+    ; qlvl = Option.value_map t.qual ~default:false ~f:snd
+    }
+  ;;
+
+  (* Max-only rules keep the first START; everything else measures from the
+     most recent one, which yields the tightest interval. *)
+  let of_slot ~pin_of (s : slot) =
+    { start = trig ~pin_of s.start
+    ; stop = trig ~pin_of s.stop
+    ; abort = Option.map s.abort ~f:(trig ~pin_of)
+    ; keep_first = Option.is_some s.max_cycles && Option.is_none s.min_cycles
+    ; min_cyc = s.min_cycles
+    ; max_cyc = s.max_cycles
+    }
+  ;;
+end

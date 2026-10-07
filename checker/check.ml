@@ -194,9 +194,99 @@ let check_order (events : Exec.event list) =
     (pairs [] events)
 ;;
 
+(* The symbolic ranges assume the waveform keeps its nominal shape: edges on
+   different pins neither meet nor swap. Two edges in the same cycle are
+   ambiguous on the wire (is SDA moving while SCL is high, or after it fell?),
+   so adjacent edges on different pins must stay at least one dt unit apart.
+   Outside this region the symbolic answer is not trusted; [concrete] is. *)
+let check_pattern edges =
+  let rec pairs acc = function
+    | a :: (b :: _ as rest) ->
+      let acc =
+        if String.equal a.pin b.pin || a.ev.s = b.ev.s
+        then acc
+        else (Knob.make ~b:b.ev.cls ~a:a.ev.cls, Some (1 - (b.ev.s - a.ev.s)), None) :: acc
+      in
+      pairs acc rest
+    | _ -> acc
+  in
+  collect
+    ~name:"PATTERN"
+    ~descr:"waveform keeps its shape: edges on different pins never meet or swap"
+    ~bound:">= 1 unit"
+    (pairs [] edges)
+;;
+
 let check ~timing (spec : Spec.t) events =
   let edges = edges_of events in
-  List.concat_map spec.rules ~f:(fun r -> check_rule ~timing r edges) @ check_order events
+  List.concat_map spec.rules ~f:(fun r -> check_rule ~timing r edges)
+  @ check_order events
+  @ check_pattern edges
+;;
+
+(* Concrete mode: the exact waveform at given fire times, with hardware
+   semantics. Edges in the same cycle form one group; a qualifier reads the
+   levels before that cycle; within a group, a rule's stop is checked before
+   its abort, then a new start arms it (as the monitor slots do). This is the
+   ground truth the symbolic ranges are checked against. *)
+type concrete =
+  { rule : string
+  ; instances : int
+  ; violations : int
+  ; min_sep : int option (* cycles *)
+  ; max_sep : int option
+  }
+[@@deriving sexp]
+
+let concrete ~ns_per_cycle (spec : Spec.t) (fires : (int * Exec.event) list) =
+  let levels = Hashtbl.create (module String) in
+  let get h p = Hashtbl.find h p |> Option.value ~default:High in
+  let groups =
+    List.group fires ~break:(fun (t1, _) (t2, _) -> t1 <> t2)
+    |> List.filter_map ~f:(fun group ->
+      let t = fst (List.hd_exn group) in
+      let before = Hashtbl.copy levels in
+      List.iter group ~f:(fun (_, (e : Exec.event)) ->
+        Option.iter (level_of e.value) ~f:(fun l -> Hashtbl.set levels ~key:e.pin ~data:l));
+      let edges =
+        Hashtbl.to_alist levels
+        |> List.filter_map ~f:(fun (pin, l) ->
+          if equal_level (get before pin) l
+          then None
+          else
+            Some
+              { ev = snd (List.hd_exn group)
+              ; pin
+              ; rising = equal_level l High
+              ; before
+              })
+      in
+      if List.is_empty edges then None else Some (t, edges))
+  in
+  List.map spec.rules ~f:(fun (r : Spec.rule) ->
+    let any trig edges = List.exists edges ~f:(matches trig) in
+    let keep_first = Option.is_some r.max_ns && Option.is_none r.min_ns in
+    let armed = ref None in
+    let seps = ref [] in
+    List.iter groups ~f:(fun (t, edges) ->
+      (match !armed with
+       | Some t0 when any r.to_ edges ->
+         seps := (t - t0) :: !seps;
+         armed := None
+       | Some _ when Option.exists r.abort ~f:(fun a -> any a edges) -> armed := None
+       | _ -> ());
+      if any r.from_ edges && not (keep_first && Option.is_some !armed)
+      then armed := Some t);
+    let bad sep =
+      let ns = sep * ns_per_cycle in
+      Option.exists r.min_ns ~f:(fun m -> ns < m) || Option.exists r.max_ns ~f:(fun m -> ns > m)
+    in
+    { rule = r.name
+    ; instances = List.length !seps
+    ; violations = List.count !seps ~f:bad
+    ; min_sep = List.min_elt !seps ~compare:Int.compare
+    ; max_sep = List.max_elt !seps ~compare:Int.compare
+    })
 ;;
 
 let range_to_string f =
