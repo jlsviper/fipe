@@ -21,6 +21,8 @@ type value =
 type event =
   { seq : int (* enqueue order, which is also queue order *)
   ; s : int (* schedule time in dt units, without skew *)
+  ; cyc : int (* the same schedule time in clock cycles, honouring prescale changes *)
+  ; scale : int (* prescale in force at enqueue; K is multiplied by it *)
   ; cls : int (* skew class; K0 = 0 *)
   ; pin : string
   ; value : value
@@ -42,6 +44,8 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
   and x = ref 0
   and y = ref 0
   and s = ref 0
+  and cyc = ref 0
+  and scale = ref 1
   and osr = ref 0
   and coder = ref 0
   and fifo = ref fifo
@@ -53,7 +57,9 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
     (match value with
      | Sample -> ()
      | v -> Hashtbl.set level ~key:pin ~data:v);
-    Queue.enqueue events { seq = Queue.length events; s = !s; cls; pin; value; pc = !pc }
+    Queue.enqueue
+      events
+      { seq = Queue.length events; s = !s; cyc = !cyc; scale = !scale; cls; pin; value; pc = !pc }
   in
   let open_drain () = !coder land Isa.Coder_mode.open_drain <> 0 in
   let high () = if open_drain () then Release else Drive1 in
@@ -71,6 +77,7 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
         | Nop -> Ok ()
         | Evt { dt; clk_pin; cls; act } ->
           s := !s + dt;
+          cyc := !cyc + (dt * !scale);
           let pin = if clk_pin then pins.clk_pin else pins.data_pin in
           pc := here;
           let value =
@@ -95,6 +102,7 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
           Ok ()
         | Dly { dt } ->
           s := !s + dt;
+          cyc := !cyc + (dt * !scale);
           Ok ()
         | Set { dst = X; imm } ->
           x := imm;
@@ -105,7 +113,14 @@ let run ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
         | Set { dst = Coder_mode; imm } ->
           coder := imm;
           Ok ()
-        | Set { dst = K1 | K2 | K3 | Pin_dir | Prescale; _ } -> Ok ()
+        | Set { dst = Prescale; imm } ->
+          scale := 1 lsl (2 * (imm land 3));
+          Ok ()
+        | Set { dst = K1 | K2 | K3 | Pin_dir; _ } -> Ok ()
+        | Jmp { cond = Always; addr } when addr = here ->
+          (* JMP to itself halts, in the executor and in the RTL *)
+          pc := Array.length program;
+          Ok ()
         | Jmp { cond = Always; addr } ->
           pc := addr;
           Ok ()

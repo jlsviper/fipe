@@ -5,7 +5,7 @@ set -euo pipefail
 
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
-  ocaml opam build-essential m4 unzip rsync git pkg-config libgmp-dev yosys
+  ocaml opam build-essential m4 unzip rsync git git-lfs pkg-config libgmp-dev yosys
 
 export OPAMYES=1
 opam init --bare --disable-sandboxing -n

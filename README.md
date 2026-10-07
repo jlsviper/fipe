@@ -18,6 +18,18 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**Sequencer and core (Oct 6).** One sequencer with the enqueue stage, decoded straight from
+`Isa.Field`, runs on the event queue with a timebase, program memory and pin drivers
+(`hw/sequencer.ml`, `hw/core.ml`). The checker's executor is the golden model:
+
+- The I2C firmware on the RTL fires all 91 events at exactly the predicted cycles.
+- Sweeping K1, K2 across the checker's ORDER boundaries, the hardware flags agree at every
+  point, on both sides of each boundary.
+- 300 random programs with random skews and pins: 207 cycle-exact, 36 order violations
+  predicted and flagged, 57 skipped (unbounded loops), 0 mismatches.
+- Core area: 125,410 um^2, of which ~95,000 is the flip-flop program memory
+  (latches planned); the sequencer is ~12,600 um^2.
+
 **Checker v0 (spec v0.3).** The I2C master write firmware is checked against all eight
 I2C standard-mode rules plus the hardware order invariant, with skews K1 (SCL) and K2 (SDA)
 symbolic. Safe region: -5 <= K2 - K1 <= 5; START and STOP are the tightest rules (400 ns).
@@ -65,8 +77,9 @@ so a timing change shows up in code review as a picture.
 
 ## Next (to the Nov 15 gate: I2C end to end in simulation)
 
-1. Enqueue stage and one sequencer in Hardcaml; its reference model; differential tests.
-2. Run the I2C firmware on the RTL and confirm its edges match the checker's event stream.
-3. Timing-monitor slots in Hardcaml, configured by the monitor compiler.
-4. An I2C EEPROM model with configurable timing, so injected faults have a realistic target.
-5. The measured-datasheet sweep, in simulation, compared against the predicted shmoo.
+1. ~~Enqueue stage and one sequencer; differential tests against the executor.~~ Done.
+2. ~~Run the I2C firmware on the RTL; edges match the checker exactly.~~ Done.
+3. On-time check in the checker (worst-case cycles between events vs queued lead).
+4. Timing-monitor slots in Hardcaml, configured by the monitor compiler.
+5. An I2C EEPROM model with configurable timing, so injected faults have a realistic target.
+6. The measured-datasheet sweep, in simulation, compared against the predicted shmoo.
