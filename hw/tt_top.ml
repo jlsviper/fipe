@@ -10,7 +10,8 @@
    Register map (7-bit address; W = write, R = read):
      0x00-0x3F W  program memory word (data bits 15..0)
      0x40      W  CTRL: bit 0 start, bit 1 clear monitors, bit 2 clear sample log
-     0x41      RW PINS: data pin [2:0], clock pin [5:3]
+     0x41      RW PINS: data pin [2:0], clock pin [5:3], input pin [8:6],
+                  auxiliary pin [11:9]
      0x42      RW SKEW: K1 [7:0], K2 [15:8], K3 [23:16] (signed)
      0x43      W  push one word into the 4-deep host data FIFO
      0x44      R  STATUS: [0] halted [1] late [2] order [3] window
@@ -77,6 +78,10 @@ let create (i : _ I.t) : _ O.t =
   let rst_n_sync = reg sync_spec (reg sync_spec i.rst_n) in
   let clear = ~:rst_n_sync in
   let spec = Reg_spec.create ~clock:i.clk ~clear () in
+  (* IN0..IN4 and ena are asynchronous too: synchronize before any logic *)
+  let sync2 x = reg sync_spec (reg sync_spec x) in
+  let in_sync = sync2 (select i.ui_in 7 3) in
+  let ena_sync = sync2 i.ena in
   let rdata = wire 32 in
   let spi =
     Host_spi.create
@@ -96,7 +101,7 @@ let create (i : _ I.t) : _ O.t =
   let start = ctrl &: bit wd 0 in
   let mon_clear = ctrl &: bit wd 1 in
   let sample_clear = ctrl &: bit wd 2 in
-  let pins = rw_reg Reg.pins 6 in
+  let pins = rw_reg Reg.pins 12 in
   let skew = rw_reg Reg.skew 24 in
   (* host data FIFO, 4 x 32 *)
   let fifo_pop = wire 1 in
@@ -128,6 +133,8 @@ let create (i : _ I.t) : _ O.t =
       ; fifo_data = fifo_head
       ; cfg_data_pin = select pins 2 0
       ; cfg_clk_pin = select pins 5 3
+      ; cfg_in_pin = select pins 8 6
+      ; cfg_aux_pin = select pins 11 9
       ; cfg_k1 = select skew 7 0
       ; cfg_k2 = select skew 15 8
       ; cfg_k3 = select skew 23 16
@@ -209,7 +216,7 @@ let create (i : _ I.t) : _ O.t =
       ; sample_count
       ; zero 2
       ; viol_sticky
-      ; i.ena
+      ; ena_sync
       ; zero 3
       ]
   in
@@ -218,7 +225,7 @@ let create (i : _ I.t) : _ O.t =
     ; Reg.skew, uresize skew 32
     ; Reg.status, status
     ; Reg.samples, samples
-    ; Reg.inputs, uresize (select i.ui_in 7 3) 32
+    ; Reg.inputs, uresize in_sync 32
     ; Reg.mon_counts, concat_lsb mon.count
     ; Reg.id, of_int ~width:32 id
     ]

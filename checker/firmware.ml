@@ -42,7 +42,7 @@ let i2c_write ?(start_stop_cls = 2) ~bytes () : Isa.t array =
   |]
 ;;
 
-let i2c_pins = { Exec.data_pin = "SDA"; clk_pin = "SCL" }
+let i2c_pins = { Exec.data_pin = "SDA"; clk_pin = "SCL"; in_pin = "SDA"; aux_pin = "AUX" }
 let byte b = b lsl 24
 
 (* Write, then prove the write started: after the STOP, address the part again.
@@ -91,3 +91,56 @@ let i2c_write_and_poll ?(start_stop_cls = 2) ~bytes () : Isa.t array =
      @ stop
      @ [ Halt ])
 ;;
+
+(* SPI READ ID (0x9F, then 24 bits in), any mode, SCLK half period [half]
+   core cycles. MOSI is the data pin, SCLK the clock pin, MISO the input pin,
+   CS the auxiliary pin. One 32-bit transfer: the host FIFO word 0x9F000000
+   shifts out the command and then zeros while 32 samples are taken; the last
+   24 are the ID. Half periods above 63 cycles use prescale x4 (multiples of 4).
+   The loop is five instructions per bit, so below about 2.5 cycles per half
+   period the sequencer cannot keep up and the on-time model reports LATE. *)
+let spi_read_id ~mode ~half : Isa.t array =
+  let open Isa in
+  let open Asm in
+  let cpol = mode land 2 <> 0 and cpha = mode land 1 <> 0 in
+  let prescale, dt =
+    if half <= 63
+    then 0, half
+    else if half % 4 = 0 && half / 4 <= 63
+    then 1, half / 4
+    else raise_s [%message "unsupported SPI half period" (half : int)]
+  in
+  let ev ?(clk = false) dt act = Ins (Evt { dt; clk_pin = clk; cls = 0; act }) in
+  let bit =
+    if not cpha
+    then
+      [ ev 0 Shift_out (* data valid half a period before the leading edge *)
+      ; ev ~clk:true dt Toggle (* leading edge: both sides sample *)
+      ; ev 0 Sample
+      ; ev ~clk:true dt Toggle (* trailing edge: both sides change *)
+      ]
+    else
+      [ ev ~clk:true dt Toggle (* leading edge: both sides change *)
+      ; ev 0 Shift_out
+      ; ev ~clk:true dt Toggle (* trailing edge: both sides sample *)
+      ; ev 0 Sample
+      ]
+  in
+  assemble
+    ([ Ins (Set { dst = Coder_mode; imm = 0 })
+     ; Ins (Set { dst = Prescale; imm = prescale })
+     ; ev 0 Aux1 (* CS high *)
+     ; ev ~clk:true 1 (if cpol then Drive1 else Drive0) (* SCLK idle level *)
+     ; ev 1 Drive0 (* one per cycle: the queue fires at most two per cycle *)
+     ; Ins (Dly { dt = 20 })
+     ; ev 0 Aux0 (* CS low *)
+     ; Ins (Pull { block = true })
+     ; Ins (Set { dst = X; imm = 31 })
+     ; Label "bit"
+     ]
+     @ bit
+     @ [ Jmp (X_dec_nz, "bit"); ev dt Aux1 (* CS high *); Halt ])
+;;
+
+let spi_pins = { Exec.data_pin = "MOSI"; clk_pin = "SCLK"; in_pin = "MISO"; aux_pin = "CS" }
+let spi_read_id_fifo = [ 0x9F lsl 24 ]

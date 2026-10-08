@@ -42,7 +42,10 @@ end
 
 let create (i : _ I.t) : _ O.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
-  let sync x = reg spec (reg spec x) in
+  (* Synchronizers have no clear: no logic may sit between an asynchronous
+     input and its first flip-flop. They flush within two cycles of reset. *)
+  let sync_spec = Reg_spec.create ~clock:i.clock () in
+  let sync x = reg sync_spec (reg sync_spec x) in
   let sck = sync i.sck and cs_n = sync i.cs_n and mosi = sync i.mosi in
   let sck_prev = reg spec sck in
   let rise = sck &: ~:sck_prev &: ~:cs_n in

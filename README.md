@@ -11,6 +11,7 @@ The architecture spec is the source of design intent; this repo implements it.
 | `spec/` | Protocol timing specs, the single source of truth for "correct" (I2C standard mode so far). |
 | `checker/` | Executor, symbolic and concrete checker, on-time cycle model, monitor compiler, assembler, firmware. |
 | `model/` | Reference models: event queue, I2C EEPROM with realistic failure mechanisms (and an optional non-monotonic deglitch bug). |
+| `tools/cdc_check.py` | Netlist proof that every asynchronous input passes a two-flop synchronizer (runs in CI; also on post-layout netlists). |
 | `bench/` | Simulated bench: a fast bus model proven against the RTL, sweep strategies, hole detection, population statistics. |
 | `hw/` | Hardcaml RTL: event queue, sequencer, core, monitors, host SPI, Tiny Tapeout top. |
 | `tests/` | The OCaml regression (`dune runtest`). |
@@ -21,6 +22,14 @@ The architecture spec is the source of design intent; this repo implements it.
 | `.github/workflows/` | `gds` (RTL to GDS, precheck, gate-level test), `test` (cocotb), `docs`, `ocaml` (our regression). |
 
 ## Status
+
+**SPI and the synchronizer proof (chip change: needs a GDS run).** Samples read a configurable
+input pin (MISO) and actions 6/7 drive an auxiliary pin (chip select): four-wire SPI. A
+frequency-by-mode READ ID sweep (`tests/test_spi.ml`) against an SPI device model with
+real-silicon failure modes finds a low-frequency hole (fails below 625 kHz), mode-0-only logic,
+and a mode that passes only by accident. The fast SPI bench matches the RTL on 7 of 7 points.
+All 18 asynchronous input bits now pass pure two-flop synchronizers; `tools/cdc_check.py` found
+17 of 18 violating on the previous post-layout netlist, and 0 now.
 
 **Timing closed (second GDS).** Setup slack at 50 MHz: +3.63 ns slow (1.08 V, 125 C), +8.64 ns
 typical, +11.09 ns fast; hold met everywhere; DRC, LVS, antenna, precheck and gate-level test clean.
@@ -151,8 +160,8 @@ so a timing change shows up in code review as a picture.
 
 ## Next
 
-1. SPI device model and a frequency-by-mode sweep against it.
-1b. Netlist-level check that every asynchronous input is synchronized; reduce hold-fix cells.
+1. GDS run for this batch; run tools/cdc_check.py on its post-layout netlist.
+1b. Formal proof of the timing contract; reduce hold-fix cells.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).
 3. Area: latch-based program memory, monitor trims.

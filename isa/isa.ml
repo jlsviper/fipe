@@ -34,15 +34,19 @@ module Act = struct
       | Toggle
       | Shift_out
       | Sample
+      | Aux0 (* drive the auxiliary pin low, e.g. SPI chip select *)
+      | Aux1 (* drive the auxiliary pin high *)
     [@@deriving sexp, compare, equal, enumerate]
 
-    let all_in_order = [ Drive0; Drive1; Release; Toggle; Shift_out; Sample ]
+    let all_in_order = [ Drive0; Drive1; Release; Toggle; Shift_out; Sample; Aux0; Aux1 ]
   end
 
   include T
   include Indexed (T)
 
-  (* Spec v0.2: everything except Sample is resolved when the event is enqueued. *)
+  (* Spec v0.2: everything except Sample is resolved when the event is enqueued.
+     Sample reads the configured input pin; Aux0/Aux1 drive the configured
+     auxiliary pin; the others act on the data or clock pin. *)
   let resolved_at_enqueue = function
     | Sample -> false
     | _ -> true

@@ -31,7 +31,18 @@ type run =
   ; window_err : bool
   }
 
-let run_core ?(k1 = 0) ?(k2 = 0) ?(k3 = 0) ~data_pin ~clk_pin ~max_cycles ~fifo program =
+let run_core
+  ?(k1 = 0)
+  ?(k2 = 0)
+  ?(k3 = 0)
+  ?in_pin
+  ?(aux_pin = 7)
+  ~data_pin
+  ~clk_pin
+  ~max_cycles
+  ~fifo
+  program
+  =
   let sim = Sim.create Core.create in
   let i : _ Core.I.t = Cyclesim.inputs sim in
   let o : _ Core.O.t = Cyclesim.outputs ~clock_edge:Before sim in
@@ -47,6 +58,8 @@ let run_core ?(k1 = 0) ?(k2 = 0) ?(k3 = 0) ~data_pin ~clk_pin ~max_cycles ~fifo 
   i.imem_we := Bits.gnd;
   set i.cfg_data_pin 3 data_pin;
   set i.cfg_clk_pin 3 clk_pin;
+  set i.cfg_in_pin 3 (Option.value in_pin ~default:data_pin);
+  set i.cfg_aux_pin 3 aux_pin;
   set i.cfg_k1 8 k1;
   set i.cfg_k2 8 k2;
   set i.cfg_k3 8 k3;
@@ -226,7 +239,7 @@ let%expect_test "skew sweep: RTL agrees with the checker and the cycle model eve
 let gen_program ?(stress = false) rand =
   let len = 4 + Random.State.int rand 36 in
   let ri n = Random.State.int rand n in
-  let acts = Isa.Act.[| Drive0; Drive1; Release; Toggle; Shift_out; Sample |] in
+  let acts = Isa.Act.[| Drive0; Drive1; Release; Toggle; Shift_out; Sample; Aux0; Aux1 |] in
   Array.init (len + 1) ~f:(fun a ->
     if a = len
     then Isa.Jmp { cond = Always; addr = a }
@@ -238,7 +251,7 @@ let gen_program ?(stress = false) rand =
           { dt = (if stress then ri 3 else ri 64)
           ; clk_pin = ri 2 = 1
           ; cls = ri 4
-          ; act = acts.(ri 6)
+          ; act = acts.(ri 8)
           }
       else if r < 58
       then Dly { dt = ri 200 }
@@ -262,7 +275,7 @@ let random_campaign ~stress ~seed ~n =
   for _ = 1 to n do
     let program = gen_program ~stress rand in
     let fifo = List.init 64 ~f:(fun _ -> Random.State.bits rand land 0xFFFF_FFFF) in
-    let pins = { C.Exec.data_pin = "D"; clk_pin = "C" } in
+    let pins = { C.Exec.data_pin = "D"; clk_pin = "C"; in_pin = "D"; aux_pin = "A" } in
     match C.Exec.run_traced ~max_steps:5_000 ~pins ~fifo program with
     | Error _ -> note "skipped: executor rejects (unbounded loop)"
     | Ok (events, trace) ->
@@ -271,10 +284,14 @@ let random_campaign ~stress ~seed ~n =
       let k = function 1 -> k1 | 2 -> k2 | 3 -> k3 | _ -> 0 in
       let data_pin = Random.State.int rand 8 in
       let clk_pin = (data_pin + 1 + Random.State.int rand 7) % 8 in
-      let pin_of = function "D" -> data_pin | _ -> clk_pin in
+      let aux_pin =
+        List.filter (List.range 0 8) ~f:(fun p -> p <> data_pin && p <> clk_pin)
+        |> fun l -> List.nth_exn l (Random.State.int rand (List.length l))
+      in
+      let pin_of = function "D" -> data_pin | "A" -> aux_pin | _ -> clk_pin in
       let last = List.fold events ~init:0 ~f:(fun m e -> Int.max m e.cyc) in
       let r =
-        run_core ~k1 ~k2 ~k3 ~data_pin ~clk_pin ~max_cycles:(last + 20_000) ~fifo program
+        run_core ~k1 ~k2 ~k3 ~aux_pin ~data_pin ~clk_pin ~max_cycles:(last + 20_000) ~fifo program
       in
       let p_order = order_violated ~k events in
       let p_late = predicted_late ~k events trace in
@@ -303,9 +320,9 @@ let random_campaign ~stress ~seed ~n =
 let%expect_test "random programs: RTL vs executor and cycle model" =
   random_campaign ~stress:false ~seed:42 ~n:300;
   [%expect {|
-    207  cycle-exact, all on time
-     36  cycle-exact, order violation predicted and flagged
-     57  skipped: executor rejects (unbounded loop) |}]
+    198  cycle-exact, all on time
+     43  cycle-exact, order violation predicted and flagged
+     59  skipped: executor rejects (unbounded loop) |}]
 ;;
 
 (* Tiny dt values, no prescale and no skew, so ORDER always holds and the only
@@ -314,7 +331,7 @@ let%expect_test "random programs: RTL vs executor and cycle model" =
 let%expect_test "stress programs: the sequencer falls behind, and the model knows when" =
   random_campaign ~stress:true ~seed:7 ~n:300;
   [%expect {|
-    118  cycle-exact, all on time
-    122  cycle-exact, late events predicted and flagged
-     60  skipped: executor rejects (unbounded loop) |}]
+    128  cycle-exact, all on time
+    110  cycle-exact, late events predicted and flagged
+     62  skipped: executor rejects (unbounded loop) |}]
 ;;

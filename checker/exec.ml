@@ -41,6 +41,8 @@ type step =
 type pins =
   { data_pin : string
   ; clk_pin : string
+  ; in_pin : string (* what Sample reads *)
+  ; aux_pin : string (* what Aux0 / Aux1 drive *)
   }
 
 let bit_31 = 1 lsl 31
@@ -88,7 +90,12 @@ let run_traced ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
         | Evt { dt; clk_pin; cls; act } ->
           s := !s + dt;
           cyc := !cyc + (dt * !scale);
-          let pin = if clk_pin then pins.clk_pin else pins.data_pin in
+          let pin =
+            match act with
+            | Sample -> pins.in_pin
+            | Aux0 | Aux1 -> pins.aux_pin
+            | _ -> if clk_pin then pins.clk_pin else pins.data_pin
+          in
           pc := here;
           let value =
             match act with
@@ -96,6 +103,8 @@ let run_traced ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
             | Drive1 -> Drive1
             | Release -> Release
             | Sample -> Sample
+            | Aux0 -> Drive0
+            | Aux1 -> Drive1
             | Toggle ->
               (* flips the last committed level, never the live pin (spec v0.2) *)
               (match committed pin with

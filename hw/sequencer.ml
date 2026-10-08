@@ -53,6 +53,8 @@ module I = struct
     ; fifo_data : 'a [@bits 32]
     ; cfg_data_pin : 'a [@bits Event_queue.pin_bits]
     ; cfg_clk_pin : 'a [@bits Event_queue.pin_bits]
+    ; cfg_in_pin : 'a [@bits Event_queue.pin_bits] (* Sample reads this pin *)
+    ; cfg_aux_pin : 'a [@bits Event_queue.pin_bits] (* Aux0/Aux1 drive this pin *)
     ; cfg_k1 : 'a [@bits 8]
     ; cfg_k2 : 'a [@bits 8]
     ; cfg_k3 : 'a [@bits 8]
@@ -142,6 +144,7 @@ let create (i : _ I.t) : _ O.t =
       ; { valid = act_is Toggle; value = mux2 (shadow ==:. Value.drive0) high lo }
       ; { valid = act_is Shift_out; value = mux2 (msb osr.value ^: invert) high lo }
       ; { valid = act_is Sample; value = of_int ~width:2 Value.sample }
+      ; { valid = act_is Aux1; value = of_int ~width:2 Value.drive1 }
       ]
   in
   let evt_go = running.value &: is Isa.Opcode.evt &: i.q_ready &: lead_ok s_evt in
@@ -205,7 +208,7 @@ let create (i : _ I.t) : _ O.t =
                     (act_is Shift_out)
                     [ osr <-- sll osr.value 1 ]
                 ; when_
-                    ~:(act_is Sample)
+                    ~:(act_is Sample |: act_is Aux0 |: act_is Aux1)
                     [ if_ tgt_clk [ shadow_clk <-- value ] [ shadow_data <-- value ] ]
                 ]
             ; when_ dly_go [ s <-- s_dly ]
@@ -226,7 +229,12 @@ let create (i : _ I.t) : _ O.t =
   ; fetch_addr
   ; enq_valid = evt_go
   ; enq_due = due
-  ; enq_pin = mux2 tgt_clk i.cfg_clk_pin i.cfg_data_pin
+  ; enq_pin =
+      priority_select_with_default
+        ~default:(mux2 tgt_clk i.cfg_clk_pin i.cfg_data_pin)
+        [ { With_valid.valid = act_is Sample; value = i.cfg_in_pin }
+        ; { valid = act_is Aux0 |: act_is Aux1; value = i.cfg_aux_pin }
+        ]
   ; enq_value = value
   ; fifo_ready = pull_go
   ; running = running.value

@@ -80,8 +80,9 @@ end
 
 let create (i : _ I.t) : _ O.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
-  let sync1 = reg spec i.pins in
-  let cur = reg spec sync1 in
+  let sync_spec = Reg_spec.create ~clock:i.clock () in
+  let sync1 = reg sync_spec i.pins in (* no clear: see Host_spi *)
+  let cur = reg sync_spec sync1 in
   let prev = reg spec cur in
   let trig ~pin ~edge ~qen ~qpin ~qlvl =
     let c = mux pin (bits_lsb cur) in

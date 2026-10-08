@@ -25,6 +25,8 @@ module I = struct
     ; fifo_data : 'a [@bits 32]
     ; cfg_data_pin : 'a [@bits Event_queue.pin_bits]
     ; cfg_clk_pin : 'a [@bits Event_queue.pin_bits]
+    ; cfg_in_pin : 'a [@bits Event_queue.pin_bits]
+    ; cfg_aux_pin : 'a [@bits Event_queue.pin_bits]
     ; cfg_k1 : 'a [@bits 8]
     ; cfg_k2 : 'a [@bits 8]
     ; cfg_k3 : 'a [@bits 8]
@@ -82,6 +84,8 @@ let create (i : _ I.t) : _ O.t =
       ; fifo_data = i.fifo_data
       ; cfg_data_pin = i.cfg_data_pin
       ; cfg_clk_pin = i.cfg_clk_pin
+      ; cfg_in_pin = i.cfg_in_pin
+      ; cfg_aux_pin = i.cfg_aux_pin
       ; cfg_k1 = i.cfg_k1
       ; cfg_k2 = i.cfg_k2
       ; cfg_k3 = i.cfg_k3
@@ -121,7 +125,8 @@ let create (i : _ I.t) : _ O.t =
       out_q, oe_q)
   in
   (* samples read the synchronized inputs (spec v0.2, input synchronization) *)
-  let synced = reg spec (reg spec i.pins_in) in
+  let sync_spec = Reg_spec.create ~clock:i.clock () in
+  let synced = reg sync_spec (reg sync_spec i.pins_in) in (* no clear: see Host_spi *)
   let is_sample v = v ==:. Sequencer.Value.sample in
   let samp0 = q.fire0_valid &: is_sample q.fire0_value in
   let samp1 = q.fire1_valid &: is_sample q.fire1_value in
