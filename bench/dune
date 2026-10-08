@@ -1,0 +1,4 @@
+(library
+ (name fipe_bench)
+ (libraries base fipe_isa fipe_spec fipe_checker fipe_model)
+ (preprocess (pps ppx_jane)))

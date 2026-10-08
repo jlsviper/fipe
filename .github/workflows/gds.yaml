@@ -1,7 +1,14 @@
 name: gds
 
+# Runs only when the chip, its tests or its metadata change: layout takes
+# hours, and software-only pushes produce byte-identical Verilog. Run it by
+# hand from the Actions tab (workflow_dispatch) after editing this file.
 on:
   push:
+    paths:
+      - 'src/**'
+      - 'info.yaml'
+      - 'test/**'
   workflow_dispatch:
 
 jobs:

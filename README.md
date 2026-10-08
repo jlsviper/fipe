@@ -10,7 +10,8 @@ The architecture spec is the source of design intent; this repo implements it.
 | `isa/` | The ISA, defined once: types, field positions, strict encode/decode. Every other part uses it. |
 | `spec/` | Protocol timing specs, the single source of truth for "correct" (I2C standard mode so far). |
 | `checker/` | Executor, symbolic and concrete checker, on-time cycle model, monitor compiler, assembler, firmware. |
-| `model/` | Reference models: event queue, I2C EEPROM with realistic failure mechanisms. |
+| `model/` | Reference models: event queue, I2C EEPROM with realistic failure mechanisms (and an optional non-monotonic deglitch bug). |
+| `bench/` | Simulated bench: a fast bus model proven against the RTL, sweep strategies, hole detection, population statistics. |
 | `hw/` | Hardcaml RTL: event queue, sequencer, core, monitors, host SPI, Tiny Tapeout top. |
 | `tests/` | The OCaml regression (`dune runtest`). |
 | `bin/gen_verilog.ml` | Writes `src/tt_um_jlsviper_fipe.v`. `--components` also writes blocks to `build/`. |
@@ -20,6 +21,20 @@ The architecture spec is the source of design intent; this repo implements it.
 | `.github/workflows/` | `gds` (RTL to GDS, precheck, gate-level test), `test` (cocotb), `docs`, `ocaml` (our regression). |
 
 ## Status
+
+**Timing closed (second GDS).** Setup slack at 50 MHz: +3.63 ns slow (1.08 V, 125 C), +8.64 ns
+typical, +11.09 ns fast; hold met everywhere; DRC, LVS, antenna, precheck and gate-level test clean.
+The registered instruction fetch moved the slow corner by 7.0 ns.
+
+**Characterization the industry way** (`bench/`, `tests/test_characterize.ml`): a fast bus model
+that reproduces the RTL exactly; a full sweep that finds non-monotonic failure holes binary search
+misses; 31-part population statistics (median, robust sigma, 6-sigma limits, outliers) with the
+hidden truth inside 124 of 124 measured brackets; self-characterization of our SPI port (passes
+50 kHz to 8.33 MHz, guaranteed at 6.25 MHz); open-drain rise time from the pins with a two-load
+method that recovers the pull-up and bus capacitance.
+
+CI: the layout, cocotb and docs workflows run only when the chip, its tests or its metadata change;
+the OCaml regression runs on every push.
 
 **Timing closure, round 1.** First GDS: setup slack at 50 MHz +10.35 ns fast, +5.37 ns typical,
 **-3.37 ns slow** (1.08 V, 125 C; 274 endpoints); hold met everywhere; LVS, DRC, antenna and
@@ -136,8 +151,8 @@ so a timing change shows up in code review as a picture.
 
 ## Next
 
-1. Confirm slow-corner setup closes after the registered fetch; then reduce hold-fix cells.
-1b. Netlist-level check that every asynchronous input is synchronized.
+1. SPI device model and a frequency-by-mode sweep against it.
+1b. Netlist-level check that every asynchronous input is synchronized; reduce hold-fix cells.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).
 3. Area: latch-based program memory, monitor trims.

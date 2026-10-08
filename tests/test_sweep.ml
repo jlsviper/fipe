@@ -210,3 +210,39 @@ let%expect_test "measured datasheet: sweep each knob until the device fails" =
     t_SU_DAT    250 ns  >   80 ns and <=  160 ns     +90 ns  su_dat_min 5 cyc
     29 simulated transactions |}]
 ;;
+
+(* The fast bus simulator must reproduce the RTL exactly before it is trusted
+   for population sweeps: same samples, same ground truth, same flags, and the
+   same device event log at the same cycles. Checked at K = 0 and on both sides
+   of every boundary the sweep found. *)
+let%expect_test "fast bus simulator matches the RTL loopback exactly" =
+  let points =
+    [ 0, 0, 0; 0, 0, 43; 0, 0, 44; 0, 0, -42; 0, 0, -43; 0, -6, 0; 0, -7, 0; 0, 50, 0; 0, 51, 0 ]
+  in
+  let same = ref 0 in
+  List.iter points ~f:(fun (k1, k2, k3) ->
+    let r = run ~k1 ~k2 ~k3 () in
+    let k = function 1 -> k1 | 2 -> k2 | 3 -> k3 | _ -> 0 in
+    let m = Fipe_bench.Bus.run ~program ~fifo ~k () in
+    let ok =
+      List.equal Int.equal r.samples m.samples
+      && Bool.equal r.written (Option.equal Int.equal m.written (Some 0x5A))
+      && Bool.equal r.flags m.flags
+      && List.equal String.equal r.log m.log
+    in
+    if ok
+    then Int.incr same
+    else
+      print_s
+        [%message
+          "DIFFERS"
+            (k1 : int)
+            (k2 : int)
+            (k3 : int)
+            (r.samples : int list)
+            (m.samples : int list)
+            (r.log : string list)
+            (m.log : string list)]);
+  printf "%d of %d points identical (samples, ground truth, flags, device log)\n" !same (List.length points);
+  [%expect {| 9 of 9 points identical (samples, ground truth, flags, device log) |}]
+;;

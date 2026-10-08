@@ -2,6 +2,9 @@ name: docs
 
 on:
   push:
+    paths:
+      - 'docs/**'
+      - 'info.yaml'
   workflow_dispatch:
 
 jobs:

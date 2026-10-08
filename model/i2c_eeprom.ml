@@ -18,6 +18,11 @@
      released after the 9th.
    - [t_wr]: after a recognized STOP ends a write, the part is busy this long
      and NACKs its address (so "ACK polling" proves the write started).
+   - [deglitch_window]: a deliberate design bug, off by default. An SDA edge
+     arriving between lo and hi cycles after SCL falls (as seen) is mistaken
+     for a START by a faulty deglitch filter. The part works with short and
+     long data hold but fails in between: a non-monotonic failure of the kind
+     binary-search characterization misses.
 
    Protocol: write only. START, address byte (addr << 1), memory address byte,
    data bytes, STOP. A write commits only on a recognized STOP at a byte
@@ -33,6 +38,7 @@ type params =
   ; t_vd_ack : int
   ; t_hd_ack : int
   ; t_wr : int
+  ; deglitch_window : (int * int) option
   }
 [@@deriving sexp]
 
@@ -47,6 +53,7 @@ let default =
   ; t_vd_ack = 40
   ; t_hd_ack = 10
   ; t_wr = 20_000
+  ; deglitch_window = None
   }
 ;;
 
@@ -70,6 +77,7 @@ type t =
   ; mutable sda_old : bool
   ; mutable sda_change_t : int
   ; mutable last_scl_rise : int
+  ; mutable last_scl_fall : int
   ; mutable state : state
   ; mutable nbit : int
   ; mutable shift : int
@@ -90,6 +98,7 @@ let create p =
   ; sda_old = true
   ; sda_change_t = -1_000_000
   ; last_scl_rise = -1_000_000
+  ; last_scl_fall = -1_000_000
   ; state = Idle
   ; nbit = 0
   ; shift = 0
@@ -140,6 +149,16 @@ let step d ~scl ~sda =
     d.sda_old <- d.sda_prev;
     d.sda_change_t <- t);
   if scl_rise then d.last_scl_rise <- t;
+  if scl_fall then d.last_scl_fall <- t;
+  (match d.p.deglitch_window, d.state with
+   | Some (lo, hi), (Recv | Ack_release _)
+     when (sda_rise || sda_fall) && (not d.scl_v) && not d.pull ->
+     let dt = t - d.last_scl_fall in
+     if dt >= lo && dt <= hi
+     then (
+       d.state <- Ignore;
+       note d (Printf.sprintf "deglitch bug: SDA edge %d cycles after SCL fall taken as START" dt))
+   | _ -> ());
   (* START and STOP: SDA moving while SCL is high (as seen) *)
   if sda_fall && scl_high && not d.pull
   then (
