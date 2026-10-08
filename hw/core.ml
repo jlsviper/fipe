@@ -64,16 +64,19 @@ let create (i : _ I.t) : _ O.t =
       reg spec ~enable:(i.imem_we &: (i.imem_addr ==:. k)) i.imem_data)
   in
   let q_ready = wire 1 in
-  (* The pc comes straight from a register, so feeding the fetched instruction
-     back into the sequencer is not a combinational loop. *)
-  let instr = wire 16 in
+  (* The sequencer computes the next fetch address from registers (its
+     instruction register, IR_PC, X, Y) and the start strobe, never from the
+     fetched word, so feeding the fetched instruction back is not a loop. The
+     word goes into the sequencer's instruction register, not its execute
+     logic. *)
+  let fetch_data = wire 16 in
   let seq =
     Sequencer.create
       { clock = i.clock
       ; clear = i.clear
       ; start = i.start
       ; t_now
-      ; instr
+      ; fetch_data
       ; q_ready
       ; fifo_valid = i.fifo_valid
       ; fifo_data = i.fifo_data
@@ -84,7 +87,7 @@ let create (i : _ I.t) : _ O.t =
       ; cfg_k3 = i.cfg_k3
       }
   in
-  instr <== mux seq.pc imem;
+  fetch_data <== mux seq.fetch_addr imem;
   let q =
     Event_queue.create
       { clock = i.clock

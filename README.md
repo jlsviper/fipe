@@ -21,6 +21,19 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**Timing closure, round 1.** First GDS: setup slack at 50 MHz +10.35 ns fast, +5.37 ns typical,
+**-3.37 ns slow** (1.08 V, 125 C; 274 endpoints); hold met everywhere; LVS, DRC, antenna and
+precheck clean. Reproduced exactly with OpenSTA on the post-layout netlist and SPEF. Every failing
+endpoint sat behind the single-cycle instruction fetch, so the fetch is now registered
+(`hw/sequencer.ml`): same cycle for every instruction, proven by the unchanged cycle-exact suite.
+The lead bound is a registered flag, and due = S + (dt + K) * prescale. The next GDS run measures it.
+
+**First GDS and review fixes.** The first RTL-to-GDS run on GitHub Actions succeeded (synthesis,
+placement, routing to zero violations, DRC). The gate-level test failed only because the CMOS5L
+template's `test/Makefile` never loads `sg13cmos5l_udp.v`, which defines the primitives the cell
+models use; one added line fixes it, verified locally with CI's Icarus 13 build and PDK revision.
+`rst_n` now passes through a two-flop synchronizer before driving the synchronous clears.
+
 **Tiny Tapeout integration.** `hw/tt_top.ml` generates `tt_um_jlsviper_fipe` (6x4 tiles,
 50 MHz): host SPI port, register map, 4-deep host FIFO, sample log, monitors behind registers.
 
@@ -123,7 +136,8 @@ so a timing change shows up in code review as a picture.
 
 ## Next
 
-1. First full GDS on GitHub Actions: timing at 50 MHz, routing, precheck, gate-level test.
+1. Confirm slow-corner setup closes after the registered fetch; then reduce hold-fix cells.
+1b. Netlist-level check that every asynchronous input is synchronized.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).
 3. Area: latch-based program memory, monitor trims.

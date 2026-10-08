@@ -69,7 +69,13 @@ module Reg = struct
 end
 
 let create (i : _ I.t) : _ O.t =
-  let clear = ~:(i.rst_n) in
+  (* rst_n comes from a pin, asynchronous to clk, but the whole design uses
+     synchronous clears. Two un-reset flip-flops synchronize it, so reset
+     asserts and releases on a clock edge and every flip-flop sees the same
+     cycle. Assertion and release are delayed by two cycles. *)
+  let sync_spec = Reg_spec.create ~clock:i.clk () in
+  let rst_n_sync = reg sync_spec (reg sync_spec i.rst_n) in
+  let clear = ~:rst_n_sync in
   let spec = Reg_spec.create ~clock:i.clk ~clear () in
   let rdata = wire 32 in
   let spi =

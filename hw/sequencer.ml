@@ -18,6 +18,19 @@
    Start: S = T + [start_lead], so a program's first events are not late.
    Halt: a JMP to itself.
 
+   Fetch is registered (closes timing at the slow corner): the instruction
+   executing is held in IR, and the next one is fetched into IR during the
+   same cycle, from IR_PC + 1 or, for a taken jump, straight from the jump
+   target. Start fetches instruction 0. So every instruction still executes
+   in exactly the cycle it did with a combinational fetch: one per cycle,
+   taken jumps included. The 64-way program-memory multiplexer now feeds only
+   IR, never the execute logic.
+
+   Lead bound: a registered flag, set when S - T >= 2^21. It is one cycle
+   stale and S grows by less than 2^18 per cycle, so S - T stays below 2^22,
+   inside the wrap-safe window, without an add-then-subtract on the critical
+   path.
+
    Not yet implemented (decoded as NOP): WAIT, MOV, PUSH, CRC, SYNC, CAP, and
    JMP conditions other than Always, X--, Y--. *)
 open! Base
@@ -34,7 +47,7 @@ module I = struct
     ; clear : 'a
     ; start : 'a
     ; t_now : 'a [@bits time_bits]
-    ; instr : 'a [@bits 16]
+    ; fetch_data : 'a [@bits 16] (* program memory at [fetch_addr] *)
     ; q_ready : 'a
     ; fifo_valid : 'a
     ; fifo_data : 'a [@bits 32]
@@ -49,7 +62,8 @@ end
 
 module O = struct
   type 'a t =
-    { pc : 'a [@bits 6]
+    { pc : 'a [@bits 6] (* address of the executing instruction *)
+    ; fetch_addr : 'a [@bits 6]
     ; enq_valid : 'a
     ; enq_due : 'a [@bits time_bits]
     ; enq_pin : 'a [@bits Event_queue.pin_bits]
@@ -75,7 +89,9 @@ let create (i : _ I.t) : _ O.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
   let open Always in
   let reg w = Variable.reg spec ~width:w in
-  let pc = reg 6
+  let pc = reg 6 (* IR_PC *)
+  and ir = reg 16
+  and far = reg 1
   and s = reg time_bits
   and x = reg 16
   and y = reg 16
@@ -89,23 +105,27 @@ let create (i : _ I.t) : _ O.t =
   and shadow_clk = reg 2
   and running = reg 1
   and halted = reg 1 in
-  let instr = i.instr in
+  let instr = ir.value in
   let f fld = field fld instr in
   let op = f Isa.Field.op in
   let is code = op ==:. code in
   (* prescale: shift left by 0, 2, 4 or 6 *)
   let scale v = mux prescale.value [ v; sll v 2; sll v 4; sll v 6 ] in
   let t24 v = uresize v time_bits in
-  (* lead bound: stall while S' - T >= 2^22 *)
-  let lead_ok s_new =
-    let d = s_new -: i.t_now in
-    ~:(~:(msb d) &: bit d (time_bits - 2))
+  (* lead bound: registered flag, S - T >= 2^21 (see header) *)
+  let lead_d = s.value -: i.t_now in
+  let far_next =
+    ~:(msb lead_d) &: (bit lead_d (time_bits - 2) |: bit lead_d (time_bits - 3))
   in
+  let lead_ok _ = ~:(far.value) in
   (* EVT *)
   let s_evt = s.value +: scale (t24 (f Isa.Field.evt_dt)) in
   let cls = f Isa.Field.evt_cls in
   let k = mux cls [ zero 8; k1.value; k2.value; k3.value ] in
-  let due = s_evt +: scale (sresize k time_bits) in
+  let dt_plus_k =
+    uresize (f Isa.Field.evt_dt) 10 +: sresize k 10 (* signed, scale is linear *)
+  in
+  let due = s.value +: scale (sresize dt_plus_k time_bits) in
   let tgt_clk = f Isa.Field.evt_tgt in
   let act = f Isa.Field.evt_act in
   let open_drain = bit coder.value 3 in
@@ -143,6 +163,8 @@ let create (i : _ I.t) : _ O.t =
         |: (cond_is X_dec_nz &: (x.value <>:. 0))
         |: (cond_is Y_dec_nz &: (y.value <>:. 0)))
   in
+  let next_addr = mux2 taken addr (pc.value +:. 1) in
+  let fetch_addr = mux2 i.start (zero 6) next_addr in
   let blocking =
     (is Isa.Opcode.evt &: ~:evt_go) |: (is Isa.Opcode.dly &: ~:dly_go) |: (is_pull &: ~:pull_go)
   in
@@ -157,6 +179,8 @@ let create (i : _ I.t) : _ O.t =
         [ running <-- vdd
         ; halted <-- gnd
         ; pc <--. 0
+        ; ir <-- i.fetch_data
+        ; far <-- gnd
         ; s <-- i.t_now +:. start_lead
         ; x <--. 0
         ; y <--. 0
@@ -169,10 +193,12 @@ let create (i : _ I.t) : _ O.t =
         ; shadow_data <--. Value.release
         ; shadow_clk <--. Value.release
         ]
-        [ when_ (running.value &: halt_now) [ running <-- gnd; halted <-- vdd ]
+        [ far <-- far_next
+        ; when_ (running.value &: halt_now) [ running <-- gnd; halted <-- vdd ]
         ; when_
             step
-            [ pc <-- mux2 taken addr (pc.value +:. 1)
+            [ pc <-- next_addr
+            ; ir <-- i.fetch_data
             ; when_ evt_go
                 [ s <-- s_evt
                 ; when_
@@ -197,6 +223,7 @@ let create (i : _ I.t) : _ O.t =
         ]
     ];
   { pc = pc.value
+  ; fetch_addr
   ; enq_valid = evt_go
   ; enq_due = due
   ; enq_pin = mux2 tgt_clk i.cfg_clk_pin i.cfg_data_pin
