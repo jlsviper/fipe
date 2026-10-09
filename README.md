@@ -23,6 +23,15 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**Late sampling, data-valid window, master-IP slave (chip change: status pins registered).**
+`Firmware.spi_read_id_sampled` places the MISO sample anywhere in the bit. Falling-edge (late)
+sampling lifts the typical part's read limit from 4.17 to 8.33 MHz. A slave that changes MISO a
+fixed delay after the rising edge (built from master IP) fails falling-edge samplers at every
+frequency from 2.5 MHz down, a real FTDI-cable failure. Sweeping the sample point measures the
+MISO data-valid window: the master-IP slave's data changes 160 ns after the rising edge, before the
+falling edge. The RTL cross-check caught a one-cycle error in the fast SPI bench (11 of 12 points
+matched); fixed, now 12 of 12. uo_out[6:0] are registered to remove the worst slow-corner path.
+
 **SPI and the synchronizer proof (chip change: needs a GDS run).** Samples read a configurable
 input pin (MISO) and actions 6/7 drive an auxiliary pin (chip select): four-wire SPI. A
 frequency-by-mode READ ID sweep (`tests/test_spi.ml`) against an SPI device model with
@@ -160,7 +169,7 @@ so a timing change shows up in code review as a picture.
 
 ## Next
 
-1. GDS run for this batch; run tools/cdc_check.py on its post-layout netlist.
+1. GDS run for this batch (timing margin should recover); CDC check on its post-layout netlist.
 1b. Formal proof of the timing contract; reduce hold-fix cells.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).

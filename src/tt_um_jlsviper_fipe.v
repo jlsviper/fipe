@@ -357,12 +357,16 @@ module tt_um_jlsviper_fipe (
     wire _17;
     reg _494;
     wire [7:0] _501;
+    wire [6:0] _2661 = 7'b0000000;
+    wire [6:0] _2660 = 7'b0000000;
     wire [3:0] _2656 = 4'b0000;
     wire _2657;
     wire _2658;
     wire _2653;
     wire _2654;
     wire _2655;
+    wire [6:0] _2659;
+    reg [6:0] _2662;
     wire _2648 = 1'b0;
     wire _2647 = 1'b0;
     wire [31:0] _2624 = 32'b00000000000000000000000000000000;
@@ -2669,7 +2673,7 @@ module tt_um_jlsviper_fipe (
     wire _2652;
     wire _102;
     reg _2649;
-    wire [7:0] _2659;
+    wire [7:0] _2663;
 
     /* logic */
     assign _201 = _194 == _200;
@@ -2983,6 +2987,13 @@ module tt_um_jlsviper_fipe (
     assign _2653 = _2187 | _2263;
     assign _2654 = _2653 | _2339;
     assign _2655 = _2654 | _2415;
+    assign _2659 = { _2655, _1176, _1147, _2658, _1285, _1208, _1203 };
+    always @(posedge _99) begin
+        if (_113)
+            _2662 <= _2661;
+        else
+            _2662 <= _2659;
+    end
     assign _2627 = _2625[30:0];
     assign _2629 = { _2627, _2628 };
     assign _649 = _644 + _648;
@@ -6218,12 +6229,12 @@ module tt_um_jlsviper_fipe (
         else
             _2649 <= _102;
     end
-    assign _2659 = { _2649, _2655, _1176, _1147, _2658, _1285, _1208, _1203 };
+    assign _2663 = { _2649, _2662 };
 
     /* aliases */
 
     /* output assignments */
-    assign uo_out = _2659;
+    assign uo_out = _2663;
     assign uio_out = _501;
     assign uio_oe = _412;
 

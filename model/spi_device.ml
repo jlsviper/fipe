@@ -13,6 +13,14 @@
      fails at LOW frequency ("would not work below half the master
      frequency").
 
+   - [change_after_rise]: None for a standard slave, which changes MISO on
+     SCLK falling edges. [Some n] models a slave built from master IP that
+     changes MISO n cycles after each RISING edge instead. The spec is vague
+     on whether that is allowed; it works with masters that sample on the
+     rising edge and fails with masters that sample on the falling edge
+     ("late sampling"), whatever the frequency. A real case: an FPGA SPI slave
+     IP and an FTDI cable sampling on the falling edge in mode 0.
+
    Logic: MOSI is sampled on SCLK rising edges and MISO changes on falling
    edges, the edges SPI modes 0 and 3 share. Modes 1 and 2 use the opposite
    edges, so a mode 0/3 device misreads them. *)
@@ -23,11 +31,19 @@ type params =
   ; min_phase : int
   ; mode0_only : bool
   ; idle_timeout : int option
+  ; change_after_rise : int option
   }
 [@@deriving sexp]
 
 (* At 50 MHz: 60 ns minimum phase, modes 0 and 3, no watchdog. *)
-let typical = { id = 0xC22016; min_phase = 3; mode0_only = false; idle_timeout = None }
+let typical =
+  { id = 0xC22016
+  ; min_phase = 3
+  ; mode0_only = false
+  ; idle_timeout = None
+  ; change_after_rise = None
+  }
+;;
 
 type state =
   | Idle
@@ -49,6 +65,7 @@ type t =
   ; mutable out : int
   ; mutable miso : bool option (* None: released *)
   ; mutable last_edge : int
+  ; mutable pending : int option (* cycle at which the next MISO bit appears *)
   ; mutable log : string list
   }
 
@@ -65,6 +82,7 @@ let create p =
   ; out = 0
   ; miso = None
   ; last_edge = 0
+  ; pending = None
   ; log = []
   }
 ;;
@@ -119,14 +137,24 @@ let step d ~cs ~sclk ~mosi =
         if d.cmd = 0x9F
         then (
           d.state <- Resp;
-          d.out <- d.p.id)
+          d.out <- d.p.id;
+          Option.iter d.p.change_after_rise ~f:(fun n -> d.pending <- Some (t + n)))
         else (
           d.state <- Ignore;
           note d (Printf.sprintf "unknown command 0x%02x" d.cmd))
-    | Resp when fall ->
+    | Resp when fall && Option.is_none d.p.change_after_rise ->
       d.miso <- Some (d.out land 0x800000 <> 0);
       d.out <- (d.out lsl 1) land 0xFFFFFF
+    | Resp when rise ->
+      Option.iter d.p.change_after_rise ~f:(fun n -> d.pending <- Some (t + n))
     | _ -> ());
+    (* the after-rise slave shifts when its fixed delay expires *)
+    (match d.pending with
+     | Some at when t >= at && Poly.equal d.state Resp ->
+       d.miso <- Some (d.out land 0x800000 <> 0);
+       d.out <- (d.out lsl 1) land 0xFFFFFF;
+       d.pending <- None
+     | _ -> ());
   d.now <- t + 1;
   d.miso
 ;;

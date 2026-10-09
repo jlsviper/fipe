@@ -34,6 +34,9 @@ let run ?(params = D.typical) ?(tail = 400) ~program () =
   for c = 1 to last + tail do
     let miso = Option.value !miso_drive ~default:true in
     miso_hist.(c) <- miso;
+    (* the bus as it is during cycle c: fires in cycle c only reach the pins
+       in cycle c + 1, so read the levels before applying them *)
+    let cs = level "CS" and sclk = level "SCLK" and mosi = level "MOSI" in
     List.iter (List.rev (Hashtbl.find_multi by_t c)) ~f:(fun seq ->
       let e = ev.(seq) in
       match e.value with
@@ -41,7 +44,7 @@ let run ?(params = D.typical) ?(tail = 400) ~program () =
         let b = if c >= 3 then miso_hist.(c - 2) else true in
         Queue.enqueue samples (if b then 1 else 0)
       | v -> Hashtbl.set drv ~key:e.pin ~data:v);
-    miso_drive := D.step dev ~cs:(level "CS") ~sclk:(level "SCLK") ~mosi:(level "MOSI")
+    miso_drive := D.step dev ~cs ~sclk ~mosi
   done;
   { samples = Queue.to_list samples
   ; late = List.exists fired ~f:(fun f -> f.late)

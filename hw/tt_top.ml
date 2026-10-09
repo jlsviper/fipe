@@ -5,6 +5,7 @@
      uo_out[7] CFG_MISO   uo_out[6] TRIG_OUT (monitor violation pulse)
      uo_out[5:0] status: halted, late, order, monitor violation (sticky),
                  sample valid, sample bit
+     uo_out[6:0] are registered: one cycle behind the internal signals.
      uio[7:0]  P0..P7, bidirectional protocol pins (open-drain via output enable)
 
    Register map (7-bit address; W = write, R = read):
@@ -240,17 +241,23 @@ let create (i : _ I.t) : _ O.t =
         spi.addr
         (List.init 128 ~f:(fun a ->
            List.Assoc.find reads a ~equal:Int.equal |> Option.value ~default:(zero 32)));
-  { uo_out =
-      concat_lsb
-        [ core.halted
-        ; core.late
-        ; core.order_err
-        ; viol_sticky <>:. 0
-        ; core.sample_valid
-        ; core.sample_bit
-        ; any_viol
-        ; spi.miso
-        ]
+  (* Status pins are registered: they show the same signals one cycle later,
+     and the fire logic no longer has to reach a pin within the output-delay
+     budget (it was the worst slow-corner path). MISO is already registered. *)
+  let status_pins =
+    reg
+      spec
+      (concat_lsb
+         [ core.halted
+         ; core.late
+         ; core.order_err
+         ; viol_sticky <>:. 0
+         ; core.sample_valid
+         ; core.sample_bit
+         ; any_viol
+         ])
+  in
+  { uo_out = concat_lsb [ status_pins; spi.miso ]
   ; uio_out = core.pins_out
   ; uio_oe = core.pins_oe
   }

@@ -144,3 +144,57 @@ let spi_read_id ~mode ~half : Isa.t array =
 
 let spi_pins = { Exec.data_pin = "MOSI"; clk_pin = "SCLK"; in_pin = "MISO"; aux_pin = "CS" }
 let spi_read_id_fifo = [ 0x9F lsl 24 ]
+
+(* SPI mode 0 READ ID with the MISO sample placed anywhere in the bit: [offset]
+   units after the SCLK rising edge, from -(h - 2) to +h, where h is the half
+   period in units. Offset 0 is ordinary rising-edge sampling; offset h samples
+   on the falling edge ("late sampling", which gains half a cycle for the
+   round trip through the slave). Sweeping it measures the MISO data-valid
+   window. MOSI changes one unit after each falling edge, so no cycle ever
+   holds more than two events. Half periods above 63 cycles use prescale x4. *)
+let spi_read_id_sampled ~half ~offset : Isa.t array =
+  let open Isa in
+  let open Asm in
+  let prescale, h =
+    if half <= 63
+    then 0, half
+    else if half % 4 = 0 && half / 4 <= 63
+    then 1, half / 4
+    else raise_s [%message "unsupported SPI half period" (half : int)]
+  in
+  if offset < -(h - 2) || offset > h
+  then raise_s [%message "sample offset out of range" (offset : int) (h : int)];
+  let ev ?(clk = false) dt act = Ins (Evt { dt; clk_pin = clk; cls = 0; act }) in
+  (* one bit, starting just after MOSI changed: rising at h - 1, falling at
+     2h - 1, next MOSI change at 2h; the sample at s = h - 1 + offset *)
+  let s = h - 1 + offset in
+  let bit =
+    if s < h - 1
+    then [ ev s Sample; ev ~clk:true (h - 1 - s) Toggle; ev ~clk:true h Toggle; ev 1 Shift_out ]
+    else if s = h - 1
+    then [ ev ~clk:true (h - 1) Toggle; ev 0 Sample; ev ~clk:true h Toggle; ev 1 Shift_out ]
+    else if s < (2 * h) - 1
+    then
+      [ ev ~clk:true (h - 1) Toggle
+      ; ev (s - h + 1) Sample
+      ; ev ~clk:true ((2 * h) - 1 - s) Toggle
+      ; ev 1 Shift_out
+      ]
+    else [ ev ~clk:true (h - 1) Toggle; ev ~clk:true h Toggle; ev 0 Sample; ev 1 Shift_out ]
+  in
+  assemble
+    ([ Ins (Set { dst = Coder_mode; imm = 0 })
+     ; Ins (Set { dst = Prescale; imm = prescale })
+     ; ev 0 Aux1 (* CS high *)
+     ; ev ~clk:true 1 Drive0 (* SCLK idles low *)
+     ; ev 1 Drive0
+     ; Ins (Dly { dt = 20 })
+     ; ev 0 Aux0 (* CS low *)
+     ; Ins (Pull { block = true })
+     ; ev 0 Shift_out (* first bit *)
+     ; Ins (Set { dst = X; imm = 31 })
+     ; Label "bit"
+     ]
+     @ bit
+     @ [ Jmp (X_dec_nz, "bit"); ev h Aux1 (* CS high *); Halt ])
+;;
