@@ -198,3 +198,60 @@ let spi_read_id_sampled ~half ~offset : Isa.t array =
      @ bit
      @ [ Jmp (X_dec_nz, "bit"); ev h Aux1 (* CS high *); Halt ])
 ;;
+
+(* UART echo exchange: for each byte, transmit it at [tx_bit] cycles per bit,
+   then receive the reply at [rx_bit] cycles per bit. One sequencer cannot
+   send and receive at the same time, so the exchange alternates. TX is the
+   data pin (push-pull, idle high), RX the input pin. Bit periods are exact to
+   one cycle: each bit is a DLY plus a one-cycle EVT. UART sends LSB first, so
+   the host bit-reverses each byte into bits 31..24 (see [uart_word]).
+
+   Receive uses WAIT: it starts watching for the start bit (RX low) only once
+   real time has caught up with the schedule, then resynchronizes the schedule
+   to the edge it saw, and samples each bit in its middle. WAIT's detection and
+   the samples see the bus through the same two-cycle synchronizer, so the
+   latencies cancel. Per byte, the sample log gets 8 data bits (LSB first) and
+   the stop bit. *)
+let uart_echo ~tx_bit ~rx_bit ~bytes : Isa.t array =
+  let open Isa in
+  let open Asm in
+  if tx_bit < 2 || tx_bit > 4000 || rx_bit < 2 || 3 * rx_bit / 2 > 4000
+  then raise_s [%message "unsupported UART bit period" (tx_bit : int) (rx_bit : int)];
+  let tx ?(dly = tx_bit - 1) act =
+    [ Ins (Dly { dt = dly }); Ins (Evt { dt = 1; clk_pin = false; cls = 0; act }) ]
+  in
+  let sample_after d =
+    [ Ins (Dly { dt = d }); Ins (Evt { dt = 0; clk_pin = false; cls = 0; act = Sample }) ]
+  in
+  assemble
+    ([ Ins (Set { dst = Coder_mode; imm = 0 })
+     ; Ins (Set { dst = Prescale; imm = 0 })
+     ; Ins (Evt { dt = 0; clk_pin = false; cls = 0; act = Drive1 }) (* idle high *)
+     ; Ins (Set { dst = Y; imm = bytes - 1 })
+     ; Label "byte"
+     ; Ins (Pull { block = true })
+     ; Ins (Set { dst = X; imm = 7 })
+     ]
+     @ tx ~dly:(tx_bit + 1) Drive0 (* start bit, after a short idle *)
+     @ [ Label "tx_bit" ]
+     @ tx Shift_out
+     @ [ Jmp (X_dec_nz, "tx_bit") ]
+     @ tx Drive1 (* stop bit *)
+     @ [ Ins (Wait { pin = In; pol = false; timeout = Forever }) (* reply's start bit *)
+       ; Ins (Set { dst = X; imm = 7 })
+       ]
+     @ sample_after (rx_bit + (rx_bit / 2)) (* middle of data bit 0 *)
+     @ [ Label "rx_bit" ]
+     @ sample_after rx_bit
+     @ [ Jmp (X_dec_nz, "rx_bit") ] (* 7 more data bits, then the stop bit *)
+     @ [ Jmp (Y_dec_nz, "byte"); Halt ])
+;;
+
+(* A byte as the host FIFO word for UART: bit-reversed into bits 31..24. *)
+let uart_word b =
+  let r = ref 0 in
+  for i = 0 to 7 do
+    if (b lsr i) land 1 = 1 then r := !r lor (1 lsl (7 - i))
+  done;
+  !r lsl 24
+;;

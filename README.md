@@ -9,8 +9,8 @@ The architecture spec is the source of design intent; this repo implements it.
 | --- | --- |
 | `isa/` | The ISA, defined once: types, field positions, strict encode/decode. Every other part uses it. |
 | `spec/` | Protocol timing specs, the single source of truth for "correct" (I2C standard mode so far). |
-| `checker/` | Executor, symbolic and concrete checker, on-time cycle model, monitor compiler, assembler, firmware. |
-| `model/` | Reference models: event queue, I2C EEPROM with realistic failure mechanisms (and an optional non-monotonic deglitch bug). |
+| `checker/` | Executor, symbolic and concrete checker, on-time cycle model, cycle-accurate simulator (`isim.ml`, handles reactive programs), monitor compiler, assembler, firmware. |
+| `model/` | Device and reference models: event queue, I2C EEPROM, SPI device, UART echo device, each with realistic failure mechanisms. |
 | `tools/cdc_check.py` | Netlist proof that every asynchronous input passes a two-flop synchronizer (runs in CI; also on post-layout netlists). |
 | `bench/` | Simulated bench: a fast bus model proven against the RTL, sweep strategies, hole detection, population statistics. |
 | `hw/` | Hardcaml RTL: event queue, sequencer, core, monitors, host SPI, Tiny Tapeout top. |
@@ -22,6 +22,15 @@ The architecture spec is the source of design intent; this repo implements it.
 | `.github/workflows/` | `gds` (RTL to GDS, precheck, gate-level test), `test` (cocotb), `docs`, `ocaml` (our regression). |
 
 ## Status
+
+**Reactive input and UART (chip change: needs a GDS run).** `WAIT` (pin condition with optional
+timeout, then resynchronize the schedule) and `JMP` on pin or flag. Both stall until real time
+catches up with the schedule, so every pin read happens at a data-determined time. A new
+cycle-accurate simulator (`checker/isim.ml`) matches the RTL on 250 random reactive programs
+against random inputs, and agrees with the executor and on-time model on 124 non-reactive ones.
+`WAIT` is also checked at gate level in cocotb. UART transmit and receive work at 115,200 baud;
+two sweeps (our transmit rate, our receive rate) measure a UART device's real bit period (within
+0.05%) and its sample point (within 1%) from the pins alone.
 
 **Late sampling, data-valid window, master-IP slave (chip change: status pins registered).**
 `Firmware.spi_read_id_sampled` places the MISO sample anywhere in the bit. Falling-edge (late)
@@ -169,7 +178,7 @@ so a timing change shows up in code review as a picture.
 
 ## Next
 
-1. GDS run for this batch (timing margin should recover); CDC check on its post-layout netlist.
+1. GDS run for this batch; timing and CDC check on its post-layout netlist.
 1b. Formal proof of the timing contract; reduce hold-fix cells.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).

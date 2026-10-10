@@ -132,13 +132,13 @@ let%expect_test "the same spec compiled into timing-monitor slots" =
 ;;
 
 let%expect_test "a program the checker cannot analyse is reported, not guessed" =
-  let prog = Fipe_isa.Isa.[| Wait { pin = 0; pol = true; timeout = 0 } |] in
+  let prog = Fipe_isa.Isa.[| Wait { pin = In; pol = true; timeout = Forever } |] in
   (match C.Exec.run ~pins:C.Firmware.i2c_pins ~fifo:[] prog with
    | Ok _ -> print_endline "analysed"
    | Error e -> print_endline (Error.to_string_hum e));
   [%expect {|
     ("unsupported in checker v0" (here 0)
-     (other (Wait (pin 0) (pol true) (timeout 0)))) |}]
+     (other (Wait (pin In) (pol true) (timeout Forever)))) |}]
 ;;
 
 let%expect_test "on-time: how far ahead of its due time each event is queued" =

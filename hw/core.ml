@@ -71,6 +71,9 @@ let create (i : _ I.t) : _ O.t =
      fetched word, so feeding the fetched instruction back is not a loop. The
      word goes into the sequencer's instruction register, not its execute
      logic. *)
+  (* synchronized inputs, shared by samples, WAIT and JMP Pin *)
+  let sync_spec = Reg_spec.create ~clock:i.clock () in
+  let synced = reg sync_spec (reg sync_spec i.pins_in) in (* no clear: see Host_spi *)
   let fetch_data = wire 16 in
   let seq =
     Sequencer.create
@@ -89,6 +92,7 @@ let create (i : _ I.t) : _ O.t =
       ; cfg_k1 = i.cfg_k1
       ; cfg_k2 = i.cfg_k2
       ; cfg_k3 = i.cfg_k3
+      ; pins_sync = synced
       }
   in
   fetch_data <== mux seq.fetch_addr imem;
@@ -125,8 +129,6 @@ let create (i : _ I.t) : _ O.t =
       out_q, oe_q)
   in
   (* samples read the synchronized inputs (spec v0.2, input synchronization) *)
-  let sync_spec = Reg_spec.create ~clock:i.clock () in
-  let synced = reg sync_spec (reg sync_spec i.pins_in) in (* no clear: see Host_spi *)
   let is_sample v = v ==:. Sequencer.Value.sample in
   let samp0 = q.fire0_valid &: is_sample q.fire0_value in
   let samp1 = q.fire1_valid &: is_sample q.fire1_value in

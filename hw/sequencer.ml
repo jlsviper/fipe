@@ -31,8 +31,18 @@
    inside the wrap-safe window, without an add-then-subtract on the critical
    path.
 
-   Not yet implemented (decoded as NOP): WAIT, MOV, PUSH, CRC, SYNC, CAP, and
-   JMP conditions other than Always, X--, Y--. *)
+   Reactive input is schedule-synchronous, so every pin read happens at a
+   data-determined time:
+   - WAIT stalls until T >= S (real time has caught up with the schedule),
+     then watches its pin (input, data, clock or auxiliary, synchronized) until
+     it equals [pol] or, if a timeout is selected, until X or Y cycles have
+     passed. Then S = T (the schedule resynchronizes to the moment the
+     condition held) and the flag records whether it timed out.
+   - JMP Pin also stalls until T >= S, then branches if the input pin is high.
+   - JMP Flag branches on the flag (no stall).
+
+   Not yet implemented (decoded as NOP): MOV, PUSH, CRC, SYNC, CAP, and the
+   JMP conditions Osr_empty, Isr_full, Cap_ready. *)
 open! Base
 open Hardcaml
 open Signal
@@ -58,6 +68,7 @@ module I = struct
     ; cfg_k1 : 'a [@bits 8]
     ; cfg_k2 : 'a [@bits 8]
     ; cfg_k3 : 'a [@bits 8]
+    ; pins_sync : 'a [@bits 8] (* synchronized pin levels, from the core *)
     }
   [@@deriving sexp_of, hardcaml]
 end
@@ -106,7 +117,9 @@ let create (i : _ I.t) : _ O.t =
   and shadow_data = reg 2 (* last committed value on the data pin *)
   and shadow_clk = reg 2
   and running = reg 1
-  and halted = reg 1 in
+  and halted = reg 1
+  and flag = reg 1 (* last WAIT timed out *)
+  and wcnt = reg 16 (* cycles spent watching in the current WAIT *) in
   let instr = ir.value in
   let f fld = field fld instr in
   let op = f Isa.Field.op in
@@ -120,6 +133,8 @@ let create (i : _ I.t) : _ O.t =
     ~:(msb lead_d) &: (bit lead_d (time_bits - 2) |: bit lead_d (time_bits - 3))
   in
   let lead_ok _ = ~:(far.value) in
+  (* real time has caught up with the schedule: T >= S *)
+  let caught_up = msb lead_d |: (lead_d ==:. 0) in
   (* EVT *)
   let s_evt = s.value +: scale (t24 (f Isa.Field.evt_dt)) in
   let cls = f Isa.Field.evt_cls in
@@ -166,10 +181,34 @@ let create (i : _ I.t) : _ O.t =
         |: (cond_is X_dec_nz &: (x.value <>:. 0))
         |: (cond_is Y_dec_nz &: (y.value <>:. 0)))
   in
+  (* WAIT *)
+  let is_wait = is Isa.Opcode.wait in
+  let pin_of_sel sel =
+    mux
+      sel
+      [ i.cfg_in_pin; i.cfg_data_pin; i.cfg_clk_pin; i.cfg_aux_pin; i.cfg_in_pin; i.cfg_in_pin; i.cfg_in_pin; i.cfg_in_pin ]
+  in
+  let level_of p = mux p (bits_lsb i.pins_sync) in
+  let pin_match = level_of (pin_of_sel (f Isa.Field.wait_pin)) ==: f Isa.Field.wait_pol in
+  let tsel = f Isa.Field.wait_tsel in
+  let limit = mux tsel [ ones 16; x.value; y.value; ones 16 ] in
+  let timed_out = (tsel <>:. Isa.Wait_timeout.to_int Forever) &: (wcnt.value >=: limit) in
+  let wait_done = caught_up &: (pin_match |: timed_out) in
+  let watching = running.value &: is_wait &: caught_up &: ~:wait_done in
+  let in_high = level_of i.cfg_in_pin in
+  let taken =
+    taken
+    |: (is_jmp &: cond_is Flag &: flag.value)
+    |: (is_jmp &: cond_is Pin &: caught_up &: in_high)
+  in
   let next_addr = mux2 taken addr (pc.value +:. 1) in
   let fetch_addr = mux2 i.start (zero 6) next_addr in
   let blocking =
-    (is Isa.Opcode.evt &: ~:evt_go) |: (is Isa.Opcode.dly &: ~:dly_go) |: (is_pull &: ~:pull_go)
+    (is Isa.Opcode.evt &: ~:evt_go)
+    |: (is Isa.Opcode.dly &: ~:dly_go)
+    |: (is_pull &: ~:pull_go)
+    |: (is_wait &: ~:wait_done)
+    |: (is_jmp &: cond_is Pin &: ~:caught_up)
   in
   let step = running.value &: ~:blocking &: ~:halt_now in
   (* SET *)
@@ -184,6 +223,8 @@ let create (i : _ I.t) : _ O.t =
         ; pc <--. 0
         ; ir <-- i.fetch_data
         ; far <-- gnd
+        ; flag <-- gnd
+        ; wcnt <--. 0
         ; s <-- i.t_now +:. start_lead
         ; x <--. 0
         ; y <--. 0
@@ -197,6 +238,7 @@ let create (i : _ I.t) : _ O.t =
         ; shadow_clk <--. Value.release
         ]
         [ far <-- far_next
+        ; wcnt <-- mux2 watching (wcnt.value +:. 1) (zero 16)
         ; when_ (running.value &: halt_now) [ running <-- gnd; halted <-- vdd ]
         ; when_
             step
@@ -212,6 +254,7 @@ let create (i : _ I.t) : _ O.t =
                     [ if_ tgt_clk [ shadow_clk <-- value ] [ shadow_data <-- value ] ]
                 ]
             ; when_ dly_go [ s <-- s_dly ]
+            ; when_ is_wait [ s <-- i.t_now; flag <-- ~:pin_match ]
             ; when_ pull_go [ osr <-- i.fifo_data ]
             ; when_ (is_jmp &: cond_is X_dec_nz &: (x.value <>:. 0)) [ x <-- x.value -:. 1 ]
             ; when_ (is_jmp &: cond_is Y_dec_nz &: (y.value <>:. 0)) [ y <-- y.value -:. 1 ]

@@ -87,3 +87,43 @@ async def test_project(dut):
     dut._log.info(f"STATUS = {status:#010x}")
     assert status & 1 == 1, "sequencer should have halted"
     assert status & 0b1110 == 0, "no late, order or window faults"
+
+
+@cocotb.test()
+async def test_wait(dut):
+    """Reactive input at gate level: WAIT for P0 to fall, then drive P1 low
+    10 cycles after the schedule resynchronizes to that edge."""
+    clock = Clock(dut.clk, 20, unit="ns")
+    cocotb.start_soon(clock.start())
+    dut.ena.value = 1
+    dut.ui_in.value = 0b010
+    dut.uio_in.value = 0xFF
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 10)
+
+    # input pin 0, data pin 1, clock pin 2, auxiliary pin 3
+    await write(dut, 0x41, 1 | (2 << 3) | (0 << 6) | (3 << 9))
+    # Set Coder_mode 0; WAIT In low; EVT dt=10 data Drive0; JMP to itself (halt).
+    # Encodings come from the OCaml ISA definition.
+    for addr, word in enumerate([0x5500, 0x3000, 0x1280, 0x4003]):
+        await write(dut, addr, word)
+    await write(dut, 0x40, 1)  # start
+
+    def p1_driven_low():
+        return (int(dut.uio_oe.value) >> 1) & 1 and not (int(dut.uio_out.value) >> 1) & 1
+
+    for _ in range(150):  # nothing happens while P0 stays high
+        await ClockCycles(dut.clk, 1)
+        assert not p1_driven_low(), "P1 must wait for P0 to fall"
+
+    dut.uio_in.value = 0xFE  # P0 falls
+    cycles = 0
+    while not p1_driven_low():
+        await ClockCycles(dut.clk, 1)
+        cycles += 1
+        assert cycles < 100, "P1 never driven after P0 fell"
+    dut._log.info(f"P1 driven low {cycles} cycles after P0 fell")
+    # 2-cycle synchronizer + 10 scheduled cycles + 1 to reach the pin register
+    assert 11 <= cycles <= 15, f"unexpected reaction time {cycles}"

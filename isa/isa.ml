@@ -143,6 +143,41 @@ module Cap_cmd = struct
   include Indexed (T)
 end
 
+(* WAIT and JMP Pin read pins relative to the pin configuration, like every
+   other instruction: the input pin, the data pin, the clock pin or the
+   auxiliary pin. *)
+module Wait_pin = struct
+  module T = struct
+    type t =
+      | In
+      | Data
+      | Clk
+      | Aux
+    [@@deriving sexp, compare, equal, enumerate]
+
+    let all_in_order = [ In; Data; Clk; Aux ]
+  end
+
+  include T
+  include Indexed (T)
+end
+
+(* WAIT timeout: none, or the value of X or Y in clock cycles. *)
+module Wait_timeout = struct
+  module T = struct
+    type t =
+      | Forever
+      | X_cycles
+      | Y_cycles
+    [@@deriving sexp, compare, equal, enumerate]
+
+    let all_in_order = [ Forever; X_cycles; Y_cycles ]
+  end
+
+  include T
+  include Indexed (T)
+end
+
 type t =
   | Nop
   | Evt of
@@ -153,9 +188,9 @@ type t =
       }
   | Dly of { dt : int (* 12 bits *) }
   | Wait of
-      { pin : int (* 3 bits *)
-      ; pol : bool
-      ; timeout : int (* timeout select, 2 bits *)
+      { pin : Wait_pin.t
+      ; pol : bool (* wait for this level *)
+      ; timeout : Wait_timeout.t
       }
   | Jmp of
       { cond : Cond.t
@@ -248,7 +283,10 @@ let encode t =
     lor put evt_act (Act.to_int act)
   | Dly { dt } -> op Opcode.dly lor put dly_dt dt
   | Wait { pin; pol; timeout } ->
-    op Opcode.wait lor put wait_pin pin lor put wait_pol (bit pol) lor put wait_tsel timeout
+    op Opcode.wait
+    lor put wait_pin (Wait_pin.to_int pin)
+    lor put wait_pol (bit pol)
+    lor put wait_tsel (Wait_timeout.to_int timeout)
   | Jmp { cond; addr } ->
     op Opcode.jmp lor put jmp_cond (Cond.to_int cond) lor put jmp_addr addr
   | Set { dst; imm } ->
@@ -275,7 +313,10 @@ let decode w =
       let%map act = Act.of_int (g evt_act) in
       Evt { dt = g evt_dt; clk_pin = g evt_tgt = 1; cls = g evt_cls; act }
     | 0x2 -> Some (Dly { dt = g dly_dt })
-    | 0x3 -> Some (Wait { pin = g wait_pin; pol = g wait_pol = 1; timeout = g wait_tsel })
+    | 0x3 ->
+      let%bind pin = Wait_pin.of_int (g wait_pin) in
+      let%map timeout = Wait_timeout.of_int (g wait_tsel) in
+      Wait { pin; pol = g wait_pol = 1; timeout }
     | 0x4 ->
       let%map cond = Cond.of_int (g jmp_cond) in
       Jmp { cond; addr = g jmp_addr }
