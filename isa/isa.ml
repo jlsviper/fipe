@@ -84,9 +84,11 @@ module Set_dst = struct
       | Coder_mode
       | Pin_dir
       | Prescale
+      | X_hi (* X[15:8] := imm, low byte kept: 16-bit loads in two SETs *)
+      | Y_hi
     [@@deriving sexp, compare, equal, enumerate]
 
-    let all_in_order = [ X; Y; K1; K2; K3; Coder_mode; Pin_dir; Prescale ]
+    let all_in_order = [ X; Y; K1; K2; K3; Coder_mode; Pin_dir; Prescale; X_hi; Y_hi ]
   end
 
   include T

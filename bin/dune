@@ -1,3 +1,7 @@
 (executable
  (name gen_verilog)
  (libraries base stdio hardcaml fipe_hw))
+
+(executable
+ (name fasm)
+ (libraries base stdio fipe_asm))

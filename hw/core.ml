@@ -54,6 +54,12 @@ module O = struct
     ; late : 'a
     ; order_err : 'a
     ; window_err : 'a
+    ; dbg_pc : 'a [@bits 6]
+    ; dbg_running : 'a
+    ; dbg_flag : 'a
+    ; dbg_s : 'a [@bits Event_queue.time_bits]
+    ; dbg_x : 'a [@bits 16]
+    ; dbg_y : 'a [@bits 16]
     }
   [@@deriving sexp_of, hardcaml]
 end
@@ -151,6 +157,12 @@ let create (i : _ I.t) : _ O.t =
   ; late = sticky (q.fire0_late |: q.fire1_late)
   ; order_err = sticky q.order_err
   ; window_err = sticky q.window_err
+  ; dbg_pc = seq.pc
+  ; dbg_running = seq.running
+  ; dbg_flag = seq.flag
+  ; dbg_s = seq.s
+  ; dbg_x = seq.x
+  ; dbg_y = seq.y
   }
 ;;
 

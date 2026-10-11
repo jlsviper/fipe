@@ -75,7 +75,11 @@ end
 
 module O = struct
   type 'a t =
-    { pc : 'a [@bits 6] (* address of the executing instruction *)
+    { s : 'a [@bits time_bits] (* debug readback *)
+    ; x : 'a [@bits 16]
+    ; y : 'a [@bits 16]
+    ; flag : 'a
+    ; pc : 'a [@bits 6] (* address of the executing instruction *)
     ; fetch_addr : 'a [@bits 6]
     ; enq_valid : 'a
     ; enq_due : 'a [@bits time_bits]
@@ -265,10 +269,16 @@ let create (i : _ I.t) : _ O.t =
             ; when_ (set_to K3) [ k3 <-- imm ]
             ; when_ (set_to Coder_mode) [ coder <-- select imm 3 0 ]
             ; when_ (set_to Prescale) [ prescale <-- select imm 1 0 ]
+            ; when_ (set_to X_hi) [ x <-- imm @: select x.value 7 0 ]
+            ; when_ (set_to Y_hi) [ y <-- imm @: select y.value 7 0 ]
             ]
         ]
     ];
-  { pc = pc.value
+  { s = s.value
+  ; x = x.value
+  ; y = y.value
+  ; flag = flag.value
+  ; pc = pc.value
   ; fetch_addr
   ; enq_valid = evt_go
   ; enq_due = due

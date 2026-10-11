@@ -28,6 +28,11 @@
      0x4A+3s   RW monitor slot s, word C: [0] enable [1] min enable [2] max enable
      0x58+s    R  monitor slot s: min seen [15:0], max seen [31:16]
      0x5C      R  monitor counts: slot s in bits [8s+7:8s]
+     0x60      R  DEBUG: [5:0] program counter [6] running [7] halted [8] flag
+                  [14:12] queue count
+     0x61      R  DEBUG: schedule time S [23:0]
+     0x62      R  DEBUG: timebase T [23:0]
+     0x63      R  DEBUG: X [15:0], Y [31:16]
      0x7F      R  ID: 0x46495045, ASCII "FIPE" *)
 open! Base
 open Hardcaml
@@ -67,6 +72,10 @@ module Reg = struct
   let mon_cfg = 0x48 (* + 3s + word *)
   let mon_seen = 0x58 (* + s *)
   let mon_counts = 0x5C
+  let dbg_state = 0x60
+  let dbg_s = 0x61
+  let dbg_t = 0x62
+  let dbg_xy = 0x63
   let id = 0x7F
 end
 
@@ -229,6 +238,20 @@ let create (i : _ I.t) : _ O.t =
     ; Reg.inputs, uresize in_sync 32
     ; Reg.mon_counts, concat_lsb mon.count
     ; Reg.id, of_int ~width:32 id
+    ; ( Reg.dbg_state
+      , uresize
+          (concat_lsb
+             [ core.dbg_pc
+             ; core.dbg_running
+             ; core.halted
+             ; core.dbg_flag
+             ; zero 3
+             ; core.queue_count
+             ])
+          32 )
+    ; Reg.dbg_s, uresize core.dbg_s 32
+    ; Reg.dbg_t, uresize core.t_now 32
+    ; Reg.dbg_xy, core.dbg_y @: core.dbg_x
     ]
     @ List.concat
         (List.mapi words ~f:(fun s (a, b, c) ->

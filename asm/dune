@@ -1,0 +1,4 @@
+(library
+ (name fipe_asm)
+ (libraries base stdio fipe_isa)
+ (preprocess (pps ppx_jane)))

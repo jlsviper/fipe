@@ -7,6 +7,8 @@ The architecture spec is the source of design intent; this repo implements it.
 
 | Path | What it is |
 | --- | --- |
+| `examples/` | Example programs in FIPE assembly: I2C, SPI, UART, rise time, WS2812, 1-Wire, JTAG. |
+| `asm/` | Assembler and disassembler (`bin/fasm.ml` is the command-line tool). |
 | `isa/` | The ISA, defined once: types, field positions, strict encode/decode. Every other part uses it. |
 | `spec/` | Protocol timing specs, the single source of truth for "correct" (I2C standard mode so far). |
 | `checker/` | Executor, symbolic and concrete checker, on-time cycle model, cycle-accurate simulator (`isim.ml`, handles reactive programs), monitor compiler, assembler, firmware. |
@@ -22,6 +24,14 @@ The architecture spec is the source of design intent; this repo implements it.
 | `.github/workflows/` | `gds` (RTL to GDS, precheck, gate-level test), `test` (cocotb), `docs`, `ocaml` (our regression). |
 
 ## Status
+
+**Toolchain and flexibility (chip change: needs a GDS run).** `fasm` assembles and disassembles
+FIPE assembly; all 12,110 legal instruction words round-trip, and every example that documents
+existing firmware assembles to its verified words exactly. Three protocols the chip was not
+designed for, written only in assembly and verified against device models and the RTL: WS2812
+(on-chip bit encoding, 400/800/1200 ns exactly), 1-Wire (presence via a schedule-synchronous
+`jmp pin`, READ ROM with valid CRC) and JTAG (IDCODE 0x4BA00477). Chip: 16-bit X/Y loads and debug
+readback registers.
 
 **Reactive input and UART (chip change: needs a GDS run).** `WAIT` (pin condition with optional
 timeout, then resynchronize the schedule) and `JMP` on pin or flag. Both stall until real time
@@ -170,6 +180,8 @@ dune build                    # compile everything
 dune runtest                  # run all tests; silence means pass
 dune promote                  # accept new expected output after an intended change
 dune exec bin/gen_verilog.exe # regenerate src/*.v (CI fails if you forget)
+dune exec bin/fasm.exe -- asm examples/uart_echo.s -o uart_echo.hex   # assemble
+dune exec bin/fasm.exe -- list examples/jtag_idcode.s                 # listing
 cd test && make               # Tiny Tapeout cocotb smoke test (needs iverilog + cocotb)
 ```
 
@@ -179,6 +191,7 @@ so a timing change shows up in code review as a picture.
 ## Next
 
 1. GDS run for this batch; timing and CDC check on its post-layout netlist.
+1a. I2C target role (the chip as an EEPROM); FPGA bring-up with real parts.
 1b. Formal proof of the timing contract; reduce hold-fix cells.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).

@@ -13,7 +13,7 @@ let%expect_test "decode/encode round-trip over every 16-bit word" =
       if Isa.encode i <> w then print_s [%message "mismatch" (w : int) (i : Isa.t)]
   done;
   printf "legal encodings: %d of 65536\n" !legal;
-  [%expect {| legal encodings: 11598 of 65536 |}]
+  [%expect {| legal encodings: 12110 of 65536 |}]
 ;;
 
 let%expect_test "a few instructions" =

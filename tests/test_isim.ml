@@ -106,8 +106,10 @@ let gen rand =
       then Isa.Evt { dt = ri 40; clk_pin = ri 2 = 1; cls = ri 4; act = acts.(ri 8) }
       else if r < 42
       then Dly { dt = ri 150 }
-      else if r < 52
+      else if r < 50
       then Set { dst = (if ri 2 = 0 then X else Y); imm = ri 60 }
+      else if r < 52
+      then Set { dst = (if ri 2 = 0 then X_hi else Y_hi); imm = ri 2 }
       else if r < 57
       then Set { dst = Coder_mode; imm = [| 0; 4; 8; 12 |].(ri 4) }
       else if r < 60
@@ -184,7 +186,7 @@ let%expect_test "simulator matches the RTL on random reactive programs" =
     !waits_done;
   [%expect {|
     250 of 250 programs identical over 2500 cycles (fires, samples, flags, halt)
-    233 contain WAIT or JMP Pin/Flag; 163 halted, 144 of them after passing WAITs |}]
+    233 contain WAIT or JMP Pin/Flag; 164 halted, 144 of them after passing WAITs |}]
 ;;
 
 (* For programs without reactive instructions, the simulator and the
@@ -224,5 +226,5 @@ let%expect_test "simulator agrees with the executor and on-time model" =
       if List.equal [%equal: int * int * int] predicted m.fires then Int.incr agree
   done;
   printf "%d of %d terminating programs: every fire identical\n" !agree !checked;
-  [%expect {| 124 of 124 terminating programs: every fire identical |}]
+  [%expect {| 128 of 128 terminating programs: every fire identical |}]
 ;;

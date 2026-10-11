@@ -135,6 +135,12 @@ let run_traced ?(max_steps = 100_000) ~pins ~fifo (program : Isa.t array) =
         | Set { dst = Prescale; imm } ->
           scale := 1 lsl (2 * (imm land 3));
           Ok ()
+        | Set { dst = X_hi; imm } ->
+          x := ((imm land 0xFF) lsl 8) lor (!x land 0xFF);
+          Ok ()
+        | Set { dst = Y_hi; imm } ->
+          y := ((imm land 0xFF) lsl 8) lor (!y land 0xFF);
+          Ok ()
         | Set { dst = K1 | K2 | K3 | Pin_dir; _ } -> Ok ()
         | Jmp { cond = Always; addr } when addr = here ->
           (* JMP to itself halts, in the executor and in the RTL *)

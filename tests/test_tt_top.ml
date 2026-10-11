@@ -193,6 +193,19 @@ let%expect_test "full chip: I2C write and poll against an EEPROM, all over the p
     (String.init 4 ~f:(fun k -> if (samples lsr (3 - k)) land 1 = 1 then '1' else '0'));
   printf "device wrote 0x%02x at 0x00\n" (Hashtbl.find_exn dev.memory 0);
   printf "monitor violations: %d\n" ((s lsr 24) land 0xF);
+  (* debug readback: where the sequencer stopped, and its registers *)
+  let st = read c T.Reg.dbg_state in
+  printf
+    "debug: pc %d running %d halted %d flag %d queue %d; S %d, T %d, X %d, Y %d\n"
+    (st land 63)
+    ((st lsr 6) land 1)
+    ((st lsr 7) land 1)
+    ((st lsr 8) land 1)
+    ((st lsr 12) land 7)
+    (read c T.Reg.dbg_s)
+    (read c T.Reg.dbg_t)
+    (read c T.Reg.dbg_xy land 0xFFFF)
+    (read c T.Reg.dbg_xy lsr 16);
   let counts = read c T.Reg.mon_counts in
   List.iteri names ~f:(fun s n ->
     let seen = read c (T.Reg.mon_seen + s) in
@@ -207,6 +220,7 @@ let%expect_test "full chip: I2C write and poll against an EEPROM, all over the p
     sampled bits, oldest first: 0001 (expect 0001: three ACKs, then busy NACK)
     device wrote 0x5a at 0x00
     monitor violations: 0
+    debug: pc 38 running 0 halted 1 flag 0 queue 0; S 38018, T 41974, X 0, Y 0
       t_HD_STA  min 220 cyc  max 220 cyc  n 2
       t_LOW     min 248 cyc  max 248 cyc  n 38
       t_SU_DAT  min 192 cyc  max 208 cyc  n 22

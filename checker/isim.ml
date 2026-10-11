@@ -294,6 +294,8 @@ let step m ~pins_in =
        | K3 -> m.k.(3) <- sext8 imm
        | Coder_mode -> m.coder <- imm land 0xF
        | Prescale -> m.prescale <- imm land 3
+       | X_hi -> m.x <- ((imm land 0xFF) lsl 8) lor (m.x land 0xFF)
+       | Y_hi -> m.y <- ((imm land 0xFF) lsl 8) lor (m.y land 0xFF)
        | Pin_dir -> ());
       advance ()
     | Nop | Mov _ | Push _ | Crc _ | Sync _ | Cap _ -> advance ());

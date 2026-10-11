@@ -1,37 +1,46 @@
 <!---
-This file is used to generate your project datasheet. Please fill in the information below and delete any unused
-sections.
+This file is used to generate your project datasheet.
 -->
 
 ## How it works
 
-FIPE is a programmable protocol emulator that audits both sides of the wire from one timing spec.
+FIPE is a programmable protocol emulator that measures devices instead of just talking to them.
 
-Two ideas set the hardware apart. First, timing comes from data, not instruction count: a
-sequencer computes timestamped pin events and commits them, fully resolved, into an event queue;
-only a shared 24-bit timebase decides when a pin moves, so branches and stalls never shift an edge.
-Per-class skew registers (K1 to K3) move chosen edges by exact amounts, which is how the chip
-injects timing faults on purpose. Second, four timing-monitor slots, compiled from the same
-protocol spec as the offline checker, watch the bus and flag when the attached device breaks a
-rule, recording the tightest and loosest intervals they see.
+Timing is data, not a side effect of code. A sequencer computes every pin event in advance and
+commits it, fully resolved, into an event queue with an exact due time; only a 24-bit timebase
+decides when a pin moves, so branches and stalls never shift an edge. Reacting to a device keeps
+that property: `wait` and `jmp pin` read pins only once real time has caught up with the schedule,
+so every input read happens at a data-determined moment. Skew registers (k1 to k3) move chosen
+edges by exact amounts, which is how the chip injects timing faults on purpose and measures a
+device's real margins. Four timing-monitor slots, compiled from the same protocol spec as the
+offline checker, watch the bus and flag when the device breaks a rule.
 
-Everything is controlled over an SPI port: load a program, push data, set skews, configure the
-monitors, start, and read back status, sampled bits and monitor results. Protocol pins are uio[7:0];
-open-drain behaviour (for I2C) comes from the output enable.
+Programs are written in FIPE assembly (`examples/*.s`, assembled by `fasm`). Example programs:
+I2C (EEPROM write with ACK polling), SPI (READ ID, with normal and late sampling), UART (echo,
+115200 baud), open-drain rise time, and three protocols the chip was not designed for: WS2812
+LEDs, 1-Wire (READ ROM) and JTAG (IDCODE).
 
 ## How to test
 
-SPI mode 0, SCK at most clk/8 for reads. Each transaction is an 8-bit command (bit 7 = write,
-bits 6..0 = register) followed by 32 data bits, MSB first. Read register 0x7F: it returns
-0x46495045 ("FIPE"). The full register map is in hw/tt_top.ml.
+Control is over SPI, mode 0, SCK at most clk/8 for reads. Each transaction is an 8-bit command
+(bit 7 = write, bits 6..0 = register) followed by 32 data bits, MSB first. Read register 0x7F: it
+returns 0x46495045 ("FIPE"). The full register map is in `hw/tt_top.ml`.
 
-To write an I2C EEPROM: load the I2C firmware into registers 0x00 to 0x26, push the address,
-memory address, data and address bytes to 0x43, set PINS (0x41) to data pin 0 and clock pin 1,
-write 1 to CTRL (0x40), wait for HALTED, then read SAMPLES (0x45): 0001 means three ACKs and a
-busy NACK, which proves the write started.
+To run a program:
+
+1. Assemble it: `dune exec bin/fasm.exe -- asm examples/uart_echo.s -o uart_echo.hex`.
+2. Write each hex word to registers 0x00, 0x01, ... (program memory, 64 words).
+3. Set PINS (0x41): data pin [2:0], clock pin [5:3], input pin [8:6], auxiliary pin [11:9].
+4. Push any data the program pulls into the FIFO (0x43), then write 1 to CTRL (0x40).
+5. Poll STATUS (0x44) until halted; read sampled bits from SAMPLES (0x45).
+
+Debug registers 0x60 to 0x63 show the program counter, run state, flag, queue count, the
+schedule time S, the timebase T, and X and Y, for bringing up real silicon. The design is
+reloaded after reset or reselection: flops do not start at zero.
 
 ## External hardware
 
-An I2C device (for example a 24C02 EEPROM) on uio[0] (SDA) and uio[1] (SCL), with 4.7 kOhm
-pull-ups to the I/O supply. A logic analyzer on uo_out is helpful: TRIG_OUT pulses on every
-monitor violation.
+Depends on the protocol: an I2C device with 4.7 kOhm pull-ups to 3.3 V on uio[0]/uio[1]; an
+SPI flash on uio[0..3] (MOSI, SCLK, MISO, CS); a UART device; WS2812 LEDs; a 1-Wire device with a
+pull-up; or a JTAG target. A logic analyzer on uo_out helps: TRIG_OUT pulses on every monitor
+violation, and the status pins show halted, late, order and sampled bits.
