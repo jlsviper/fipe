@@ -30,8 +30,9 @@ inductive: it holds in the initial state, and if it holds in any state, it
 holds in the next, so it holds forever.
 
 `core_pins.sv` instantiates the entire core with every input left free (any
-program, any host traffic, any pin waveform) and asserts that each cycle's pin
-registers equal the previous ones updated by the previous cycle's fires.
+pair of programs, any host traffic, any pin waveform) and asserts that each
+cycle's pin registers equal the previous ones updated by the previous cycle's
+fires, B's then A's.
 
 ## Assumptions
 
@@ -44,8 +45,8 @@ registers equal the previous ones updated by the previous cycle's fires.
 ## The proofs can fail
 
 A proof that cannot fail proves nothing; a wrong assumption could make it pass
-vacuously. `tools/formal_mutants.sh` plants seven bugs, one at a time, and
-checks that each one makes a proof fail:
+vacuously. `tools/formal_mutants.sh` plants bugs, one at a time, and
+checks that each of these eight makes a proof fail:
 
 | Planted bug | Caught by |
 | --- | --- |
@@ -55,13 +56,14 @@ checks that each one makes a proof fail:
 | The late flag is set when an event is exactly on time | queue contract |
 | The queue writes the wrong slot when its pointer wraps | queue contract |
 | The start signal pulses a pin directly | pin contract |
-| Two same-cycle fires are applied in the wrong order | pin contract |
+| A's two same-cycle fires are applied in the wrong order | pin contract |
+| B overrides A in a same-cycle conflict | pin contract |
 
 ## Running them
 
 ```
 ./tools/formal.sh            # both proofs (needs Yosys; generates the Verilog first)
-./tools/formal_mutants.sh    # the seven planted bugs; every one must be caught
+./tools/formal_mutants.sh    # the eight planted bugs; every one must be caught
 ```
 
 Both run in CI on every push (the `ocaml` workflow).

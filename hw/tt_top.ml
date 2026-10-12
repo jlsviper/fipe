@@ -10,7 +10,8 @@
 
    Register map (7-bit address; W = write, R = read):
      0x00-0x3F W  program memory word (data bits 15..0)
-     0x40      W  CTRL: bit 0 start, bit 1 clear monitors, bit 2 clear sample log
+     0x40      W  CTRL: bit 0 start A, bit 1 clear monitors, bit 2 clear sample
+                  logs, bit 3 start B (bits 0 and 3 together: same cycle)
      0x41      RW PINS: data pin [2:0], clock pin [5:3], input pin [8:6],
                   auxiliary pin [11:9]
      0x42      RW SKEW: K1 [7:0], K2 [15:8], K3 [23:16] (signed)
@@ -20,6 +21,7 @@
                   [27:24] monitor violations (sticky) [28] ena [31:29] unused
      0x45      R  SAMPLES: last 32 sampled bits, newest in bit 0
      0x46      R  INPUTS: IN0..IN4 levels [4:0]
+     0x47      RW ENTRY: sequencer A start address [5:0], B [13:8]
      0x48+3s   RW monitor slot s, word A: [0] keep_first [10:1] start trigger
                   [20:11] stop trigger [21] abort enable [31:22] abort trigger
                   (trigger: [2:0] pin [4:3] edge [5] qualifier enable
@@ -33,6 +35,16 @@
      0x61      R  DEBUG: schedule time S [23:0]
      0x62      R  DEBUG: timebase T [23:0]
      0x63      R  DEBUG: X [15:0], Y [31:16]
+     0x64      RW PINS_B: sequencer B's pin roles, as PINS
+     0x65      R  STATUS_B: B's halted, late, order, window, queue, FIFO and
+                  sample counts, in STATUS's layout; [29] conflict
+     0x66      W  push one word into B's 4-deep host data FIFO
+     0x67      R  SAMPLES_B: B's last 32 sampled bits, newest in bit 0
+     0x68      R  DEBUG_B: B's program counter, running, halted, flag, queue
+     0x69      R  DEBUG_B: B's schedule time S
+     0x6A      R  DEBUG_B: B's X [15:0], Y [31:16]
+   STATUS [29] (and STATUS_B [29]): CONFLICT, A and B changed the same pin
+   in one cycle (A wins); sticky until either sequencer starts.
      0x7F      R  ID: 0x46495045, ASCII "FIPE" *)
 open! Base
 open Hardcaml
@@ -69,6 +81,7 @@ module Reg = struct
   let status = 0x44
   let samples = 0x45
   let inputs = 0x46
+  let entry = 0x47
   let mon_cfg = 0x48 (* + 3s + word *)
   let mon_seen = 0x58 (* + s *)
   let mon_counts = 0x5C
@@ -76,6 +89,13 @@ module Reg = struct
   let dbg_s = 0x61
   let dbg_t = 0x62
   let dbg_xy = 0x63
+  let pins_b = 0x64
+  let status_b = 0x65
+  let fifo_b = 0x66
+  let samples_b = 0x67
+  let dbg_b_state = 0x68
+  let dbg_b_s = 0x69
+  let dbg_b_xy = 0x6A
   let id = 0x7F
 end
 
@@ -111,40 +131,55 @@ let create (i : _ I.t) : _ O.t =
   let start = ctrl &: bit wd 0 in
   let mon_clear = ctrl &: bit wd 1 in
   let sample_clear = ctrl &: bit wd 2 in
+  let start_b = ctrl &: bit wd 3 in
   let pins = rw_reg Reg.pins 12 in
+  let pins_b = rw_reg Reg.pins_b 12 in
+  let entry = rw_reg Reg.entry 14 in
   let skew = rw_reg Reg.skew 24 in
-  (* host data FIFO, 4 x 32 *)
-  let fifo_pop = wire 1 in
-  let fifo_push = wr Reg.fifo in
+  (* host data FIFOs, 4 x 32, one per sequencer *)
   let open Always in
-  let fcount = Variable.reg spec ~width:3 in
-  let frp = Variable.reg spec ~width:2 in
-  let fwp = Variable.reg spec ~width:2 in
-  let fmem = Array.init 4 ~f:(fun _ -> Variable.reg spec ~width:32) in
-  let push_ok = fifo_push &: (fcount.value <:. 4) in
-  let pop_ok = fifo_pop &: (fcount.value >:. 0) in
-  compile
-    ([ when_ push_ok [ fwp <-- fwp.value +:. 1 ]
-     ; when_ pop_ok [ frp <-- frp.value +:. 1 ]
-     ; fcount <-- fcount.value +: uresize push_ok 3 -: uresize pop_ok 3
-     ]
-     @ List.init 4 ~f:(fun k -> when_ (push_ok &: (fwp.value ==:. k)) [ fmem.(k) <-- wd ]));
-  let fifo_head = mux frp.value (Array.to_list fmem |> List.map ~f:(fun v -> v.value)) in
+  let make_fifo ~push =
+    let pop = wire 1 in
+    let fcount = Variable.reg spec ~width:3 in
+    let frp = Variable.reg spec ~width:2 in
+    let fwp = Variable.reg spec ~width:2 in
+    let fmem = Array.init 4 ~f:(fun _ -> Variable.reg spec ~width:32) in
+    let push_ok = push &: (fcount.value <:. 4) in
+    let pop_ok = pop &: (fcount.value >:. 0) in
+    compile
+      ([ when_ push_ok [ fwp <-- fwp.value +:. 1 ]
+       ; when_ pop_ok [ frp <-- frp.value +:. 1 ]
+       ; fcount <-- fcount.value +: uresize push_ok 3 -: uresize pop_ok 3
+       ]
+       @ List.init 4 ~f:(fun k -> when_ (push_ok &: (fwp.value ==:. k)) [ fmem.(k) <-- wd ]));
+    fcount.value, mux frp.value (Array.to_list fmem |> List.map ~f:(fun v -> v.value)), pop
+  in
+  let fcount, fifo_head, fifo_pop = make_fifo ~push:(wr Reg.fifo) in
+  let fcount_b, fifo_head_b, fifo_pop_b = make_fifo ~push:(wr Reg.fifo_b) in
   (* the core *)
   let core =
     Core.create
       { clock = i.clk
       ; clear
       ; start
+      ; start_b
+      ; entry_a = select entry 5 0
+      ; entry_b = select entry 13 8
       ; imem_we = spi.wr_strobe &: (spi.addr <:. 64)
       ; imem_addr = select spi.addr 5 0
       ; imem_data = select wd 15 0
-      ; fifo_valid = fcount.value >:. 0
+      ; fifo_valid = fcount >:. 0
       ; fifo_data = fifo_head
+      ; fifo_b_valid = fcount_b >:. 0
+      ; fifo_b_data = fifo_head_b
       ; cfg_data_pin = select pins 2 0
       ; cfg_clk_pin = select pins 5 3
       ; cfg_in_pin = select pins 8 6
       ; cfg_aux_pin = select pins 11 9
+      ; cfg_b_data_pin = select pins_b 2 0
+      ; cfg_b_clk_pin = select pins_b 5 3
+      ; cfg_b_in_pin = select pins_b 8 6
+      ; cfg_b_aux_pin = select pins_b 11 9
       ; cfg_k1 = select skew 7 0
       ; cfg_k2 = select skew 15 8
       ; cfg_k3 = select skew 23 16
@@ -152,16 +187,27 @@ let create (i : _ I.t) : _ O.t =
       }
   in
   fifo_pop <== core.fifo_ready;
-  (* sample log *)
-  let samples =
-    reg_fb spec ~width:32 ~f:(fun q ->
-      mux2 (sample_clear |: start) (zero 32)
-        (mux2 core.sample_valid (lsbs q @: core.sample_bit) q))
+  fifo_pop_b <== core.fifo_b_ready;
+  (* sample logs, one per sequencer *)
+  let make_log ~clear_now ~valid ~bit_in =
+    let samples =
+      reg_fb spec ~width:32 ~f:(fun q ->
+        mux2 clear_now (zero 32) (mux2 valid (lsbs q @: bit_in) q))
+    in
+    let count =
+      reg_fb spec ~width:6 ~f:(fun q ->
+        mux2 clear_now (zero 6) (mux2 (valid &: (q <>:. 63)) (q +:. 1) q))
+    in
+    samples, count
   in
-  let sample_count =
-    reg_fb spec ~width:6 ~f:(fun q ->
-      mux2 (sample_clear |: start) (zero 6)
-        (mux2 (core.sample_valid &: (q <>:. 63)) (q +:. 1) q))
+  let samples, sample_count =
+    make_log ~clear_now:(sample_clear |: start) ~valid:core.sample_valid ~bit_in:core.sample_bit
+  in
+  let samples_b, sample_count_b =
+    make_log
+      ~clear_now:(sample_clear |: start_b)
+      ~valid:core.sample_valid_b
+      ~bit_in:core.sample_bit_b
   in
   (* monitors, configured through registers *)
   let n = Monitors.n_slots in
@@ -221,13 +267,32 @@ let create (i : _ I.t) : _ O.t =
       ; core.window_err
       ; core.queue_count
       ; gnd
-      ; fcount.value
+      ; fcount
       ; zero 5
       ; sample_count
       ; zero 2
       ; viol_sticky
       ; ena_sync
-      ; zero 3
+      ; core.conflict
+      ; zero 2
+      ]
+  in
+  let status_b =
+    concat_lsb
+      [ core.halted_b
+      ; core.late_b
+      ; core.order_err_b
+      ; core.window_err_b
+      ; core.queue_count_b
+      ; gnd
+      ; fcount_b
+      ; zero 5
+      ; sample_count_b
+      ; zero 2
+      ; zero 4
+      ; gnd
+      ; core.conflict
+      ; zero 2
       ]
   in
   let reads =
@@ -252,6 +317,23 @@ let create (i : _ I.t) : _ O.t =
     ; Reg.dbg_s, uresize core.dbg_s 32
     ; Reg.dbg_t, uresize core.t_now 32
     ; Reg.dbg_xy, core.dbg_y @: core.dbg_x
+    ; Reg.entry, uresize entry 32
+    ; Reg.pins_b, uresize pins_b 32
+    ; Reg.status_b, status_b
+    ; Reg.samples_b, samples_b
+    ; ( Reg.dbg_b_state
+      , uresize
+          (concat_lsb
+             [ core.dbg_b_pc
+             ; core.dbg_b_running
+             ; core.halted_b
+             ; core.dbg_b_flag
+             ; zero 3
+             ; core.queue_count_b
+             ])
+          32 )
+    ; Reg.dbg_b_s, uresize core.dbg_b_s 32
+    ; Reg.dbg_b_xy, core.dbg_b_y @: core.dbg_b_x
     ]
     @ List.concat
         (List.mapi words ~f:(fun s (a, b, c) ->

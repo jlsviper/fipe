@@ -235,7 +235,7 @@ let parse_line line consts toks =
   | m -> fail line "unknown instruction %S" m
 ;;
 
-let assemble_exn (src : string) : Isa.t array =
+let assemble_with_labels_exn (src : string) : Isa.t array * (string * int) list =
   let consts = Hashtbl.create (module String) in
   let labels = Hashtbl.create (module String) in
   let items = Queue.create () in
@@ -276,6 +276,7 @@ let assemble_exn (src : string) : Isa.t array =
       else Queue.enqueue items (parse_line line consts toks m)));
   let n = Queue.length items in
   if n > 64 then raise (Asm_error (0, Printf.sprintf "program has %d instructions; the limit is 64" n));
+  let program =
   Queue.to_array items
   |> Array.mapi ~f:(fun addr -> function
     | Done i -> i
@@ -289,11 +290,23 @@ let assemble_exn (src : string) : Isa.t array =
         | None -> in_range line "jump address" (number line consts target) ~lo:0 ~hi:63
       in
       Isa.Jmp { cond; addr })
+  in
+  program, Hashtbl.to_alist labels |> List.sort ~compare:(fun (_, a) (_, b) -> Int.compare a b)
 ;;
+
+let assemble_exn src = fst (assemble_with_labels_exn src)
 
 let assemble src =
   match assemble_exn src with
   | p -> Ok p
+  | exception Asm_error (line, msg) -> Error (Printf.sprintf "line %d: %s" line msg)
+;;
+
+(* The program and its label addresses (for example, a second sequencer's
+   entry point). *)
+let assemble_with_labels src =
+  match assemble_with_labels_exn src with
+  | r -> Ok r
   | exception Asm_error (line, msg) -> Error (Printf.sprintf "line %d: %s" line msg)
 ;;
 

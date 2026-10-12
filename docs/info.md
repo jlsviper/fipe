@@ -15,6 +15,10 @@ edges by exact amounts, which is how the chip injects timing faults on purpose a
 device's real margins. Four timing-monitor slots, compiled from the same protocol spec as the
 offline checker, watch the bus and flag when the device breaks a rule.
 
+Two sequencers share the time base and the program memory, so concurrent programs (for example,
+full-duplex UART: one transmits while the other receives) stay on one time axis; if both change
+one pin in the same cycle, sequencer A wins and the CONFLICT flag is set.
+
 Programs are written in FIPE assembly (`examples/*.s`, assembled by `fasm`). Example programs:
 I2C (EEPROM write with ACK polling), SPI (READ ID, with normal and late sampling), UART (echo,
 115200 baud), open-drain rise time, and three protocols the chip was not designed for: WS2812
@@ -32,6 +36,9 @@ To run a program:
 2. Write each hex word to registers 0x00, 0x01, ... (program memory, 64 words).
 3. Set PINS (0x41): data pin [2:0], clock pin [5:3], input pin [8:6], auxiliary pin [11:9].
 4. Push any data the program pulls into the FIFO (0x43), then write 1 to CTRL (0x40).
+   For sequencer B: its pins at 0x64, its start address in ENTRY (0x47, bits 13..8, from
+   `fasm labels`), its FIFO at 0x66; CTRL bit 3 starts it (bits 0 and 3 together start both
+   in the same cycle). B's status is at 0x65 and its samples at 0x67.
 5. Poll STATUS (0x44) until halted; read sampled bits from SAMPLES (0x45).
 
 Debug registers 0x60 to 0x63 show the program counter, run state, flag, queue count, the

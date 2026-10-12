@@ -98,6 +98,8 @@ type t =
   ; mutable window_err : bool
   ; fires : fire Queue.t
   ; samples : (int * int) Queue.t (* cycle, bit *)
+  ; mutable b : t option (* sequencer B, sharing time, memory and pins *)
+  ; mutable conflict : bool (* A and B changed one pin in one cycle *)
   }
 
 let sext8 v =
@@ -107,12 +109,25 @@ let sext8 v =
 
 (* The start cycle (cycle 0): registers as the RTL leaves them at its end.
    [pins] is the bus level before start, which the synchronizer holds. *)
-let create ?(cfg = default_config) ?(pins = 0xFF) ~fifo program =
+let rec create ?(cfg = default_config) ?(pins = 0xFF) ?(entry = 0) ?b ~fifo program =
+  let m = create_lane ~cfg ~pins ~entry ~fifo program in
+  (* B shares the skew registers (one SKEW register on the chip) *)
+  m.b
+  <- Option.map b ~f:(fun ((bcfg : config), bentry, bfifo) ->
+       create_lane
+         ~cfg:{ bcfg with k1 = cfg.k1; k2 = cfg.k2; k3 = cfg.k3 }
+         ~pins
+         ~entry:bentry
+         ~fifo:bfifo
+         program);
+  m
+
+and create_lane ~cfg ~pins ~entry ~fifo program =
   { program
   ; cfg
   ; now = 1
   ; fifo
-  ; pc = 0
+  ; pc = entry
   ; s = start_lead
   ; x = 0
   ; y = 0
@@ -138,6 +153,8 @@ let create ?(cfg = default_config) ?(pins = 0xFF) ~fifo program =
   ; window_err = false
   ; fires = Queue.create ()
   ; samples = Queue.create ()
+  ; b = None
+  ; conflict = false
   }
 ;;
 
@@ -147,9 +164,10 @@ let scale m v = v lsl (2 * m.prescale)
 let own_level m p = (not m.oe.(p)) || m.out.(p)
 
 (* One clock cycle. [pins_in] is the bus as it is during this cycle. *)
-let step m ~pins_in =
-  let c = m.now in
-  let synced = m.sync2 in
+(* One lane (a sequencer and its queue) for one cycle: fires from the queue's
+   state at the start of the cycle, then the sequencer, then the queue accepts
+   any new entry. Returns what fired, in order; pins are updated by [step]. *)
+let lane_step m ~c ~synced =
   let pin_high p = (synced lsr p) land 1 = 1 in
   (* --- queue fires (state at start of cycle) --- *)
   let count_start = Queue.length m.queue in
@@ -310,20 +328,40 @@ let step m ~pins_in =
     if d >= 1 lsl 22 || d <= -(1 lsl 22) then m.window_err <- true;
     m.last_due <- Some e.due;
     Queue.enqueue m.queue e);
-  (* --- pin drivers: this cycle's fires take effect next cycle, in order --- *)
-  List.iter (List.rev !fired) ~f:(fun f ->
+  List.rev !fired
+;;
+
+let changes_pin (f : fire) = f.value <> sample
+
+(* One clock cycle. [pins_in] is the bus as it is during this cycle. *)
+let step m ~pins_in =
+  let c = m.now in
+  let synced = m.sync2 in
+  let fired_a = lane_step m ~c ~synced in
+  let fired_b = Option.value_map m.b ~default:[] ~f:(fun b -> lane_step b ~c ~synced) in
+  if List.exists fired_a ~f:(fun fa ->
+       changes_pin fa && List.exists fired_b ~f:(fun fb -> changes_pin fb && fb.pin = fa.pin))
+  then m.conflict <- true;
+  (* pin drivers: fires take effect next cycle; B's first, then A's, so A wins *)
+  List.iter (fired_b @ fired_a) ~f:(fun f ->
     if f.value = drive0 || f.value = drive1
     then (
       m.out.(f.pin) <- f.value = drive1;
       m.oe.(f.pin) <- true)
     else if f.value = release
     then m.oe.(f.pin) <- false);
-  (* --- input synchronizer --- *)
+  (* input synchronizer *)
   m.sync2 <- m.sync1;
   m.sync1 <- pins_in land 0xFF;
-  m.now <- c + 1
+  m.now <- c + 1;
+  Option.iter m.b ~f:(fun b -> b.now <- c + 1)
 ;;
 
-let done_ m = m.halted && Queue.is_empty m.queue
+let lane_done m = m.halted && Queue.is_empty m.queue
+let done_ m = lane_done m && Option.for_all m.b ~f:lane_done
 let fires m = Queue.to_list m.fires
 let samples m = Queue.to_list m.samples
+
+let b_exn m = Option.value_exn ~message:"no sequencer B" m.b
+let fires_b m = fires (b_exn m)
+let samples_b m = samples (b_exn m)

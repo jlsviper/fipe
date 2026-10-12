@@ -1,7 +1,7 @@
 name: equiv
 
 # Formal equivalence of the RTL and an IHP-cell gate netlist (tools/equiv.sh).
-# About 15 minutes, so it runs only when the chip's Verilog changes, or by hand.
+# About 20 to 40 minutes, so it runs only when the chip's Verilog changes, or by hand.
 on:
   push:
     paths:
@@ -11,7 +11,7 @@ on:
 jobs:
   equiv:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6

@@ -1,6 +1,11 @@
-(* Core: timebase, program memory, one sequencer, its event queue, and the pin
-   drivers. This is the unit the end-to-end tests drive; the Tiny Tapeout top
-   and the second sequencer wrap around it later.
+(* Core: timebase, program memory, two sequencers (A and B) with their event
+   queues, and the pin drivers. This is the unit the end-to-end tests drive.
+
+   The sequencers share the timebase and the program memory (each has its own
+   read port and starts at its own entry address), so their events land on one
+   time axis: concurrency without interleaving. If both fire on the same pin in
+   the same cycle, A wins and CONFLICT is set (sticky until either starts).
+   With B idle, the core behaves exactly as the single-sequencer core did.
 
    Pins: a fired event drives 0, drives 1, or releases (output enable off).
    If two events fire on the same pin in one cycle, the later one in queue
@@ -17,16 +22,25 @@ module I = struct
   type 'a t =
     { clock : 'a
     ; clear : 'a
-    ; start : 'a
+    ; start : 'a (* start sequencer A *)
+    ; start_b : 'a (* start sequencer B (both in one cycle: same time base) *)
+    ; entry_a : 'a [@bits 6]
+    ; entry_b : 'a [@bits 6]
     ; imem_we : 'a
     ; imem_addr : 'a [@bits 6]
     ; imem_data : 'a [@bits 16]
     ; fifo_valid : 'a
     ; fifo_data : 'a [@bits 32]
+    ; fifo_b_valid : 'a
+    ; fifo_b_data : 'a [@bits 32]
     ; cfg_data_pin : 'a [@bits Event_queue.pin_bits]
     ; cfg_clk_pin : 'a [@bits Event_queue.pin_bits]
     ; cfg_in_pin : 'a [@bits Event_queue.pin_bits]
     ; cfg_aux_pin : 'a [@bits Event_queue.pin_bits]
+    ; cfg_b_data_pin : 'a [@bits Event_queue.pin_bits]
+    ; cfg_b_clk_pin : 'a [@bits Event_queue.pin_bits]
+    ; cfg_b_in_pin : 'a [@bits Event_queue.pin_bits]
+    ; cfg_b_aux_pin : 'a [@bits Event_queue.pin_bits]
     ; cfg_k1 : 'a [@bits 8]
     ; cfg_k2 : 'a [@bits 8]
     ; cfg_k3 : 'a [@bits 8]
@@ -60,6 +74,28 @@ module O = struct
     ; dbg_s : 'a [@bits Event_queue.time_bits]
     ; dbg_x : 'a [@bits 16]
     ; dbg_y : 'a [@bits 16]
+    ; (* sequencer B *)
+      fifo_b_ready : 'a
+    ; halted_b : 'a
+    ; queue_count_b : 'a [@bits Event_queue.count_bits]
+    ; fire0_b_valid : 'a
+    ; fire0_b_pin : 'a [@bits Event_queue.pin_bits]
+    ; fire0_b_value : 'a [@bits Event_queue.value_bits]
+    ; fire1_b_valid : 'a
+    ; fire1_b_pin : 'a [@bits Event_queue.pin_bits]
+    ; fire1_b_value : 'a [@bits Event_queue.value_bits]
+    ; sample_valid_b : 'a
+    ; sample_bit_b : 'a
+    ; late_b : 'a
+    ; order_err_b : 'a
+    ; window_err_b : 'a
+    ; dbg_b_pc : 'a [@bits 6]
+    ; dbg_b_running : 'a
+    ; dbg_b_flag : 'a
+    ; dbg_b_s : 'a [@bits Event_queue.time_bits]
+    ; dbg_b_x : 'a [@bits 16]
+    ; dbg_b_y : 'a [@bits 16]
+    ; conflict : 'a (* A and B fired on the same pin in one cycle *)
     }
   [@@deriving sexp_of, hardcaml]
 end
@@ -76,50 +112,75 @@ let create (i : _ I.t) : _ O.t =
     List.init imem_words ~f:(fun k ->
       reg imem_spec ~enable:(i.imem_we &: (i.imem_addr ==:. k)) i.imem_data)
   in
-  let q_ready = wire 1 in
-  (* The sequencer computes the next fetch address from registers (its
-     instruction register, IR_PC, X, Y) and the start strobe, never from the
-     fetched word, so feeding the fetched instruction back is not a loop. The
-     word goes into the sequencer's instruction register, not its execute
-     logic. *)
   (* synchronized inputs, shared by samples, WAIT and JMP Pin *)
   let sync_spec = Reg_spec.create ~clock:i.clock () in
   let synced = reg sync_spec (reg sync_spec i.pins_in) in (* no clear: see Host_spi *)
-  let fetch_data = wire 16 in
-  let seq =
-    Sequencer.create
-      { clock = i.clock
-      ; clear = i.clear
-      ; start = i.start
-      ; t_now
-      ; fetch_data
-      ; q_ready
-      ; fifo_valid = i.fifo_valid
-      ; fifo_data = i.fifo_data
-      ; cfg_data_pin = i.cfg_data_pin
-      ; cfg_clk_pin = i.cfg_clk_pin
-      ; cfg_in_pin = i.cfg_in_pin
-      ; cfg_aux_pin = i.cfg_aux_pin
-      ; cfg_k1 = i.cfg_k1
-      ; cfg_k2 = i.cfg_k2
-      ; cfg_k3 = i.cfg_k3
-      ; pins_sync = synced
-      }
+  (* One sequencer and its queue. The sequencer computes its next fetch address
+     from registers (its instruction register, IR_PC, X, Y) and its start
+     strobe, never from the fetched word, so feeding the word back is not a
+     loop. Each sequencer has its own read port on the shared memory. *)
+  let lane ~start ~entry ~fifo_valid ~fifo_data ~data ~clk ~inp ~aux =
+    let q_ready = wire 1 in
+    let fetch_data = wire 16 in
+    let seq =
+      Sequencer.create
+        { clock = i.clock
+        ; clear = i.clear
+        ; start
+        ; entry
+        ; t_now
+        ; fetch_data
+        ; q_ready
+        ; fifo_valid
+        ; fifo_data
+        ; cfg_data_pin = data
+        ; cfg_clk_pin = clk
+        ; cfg_in_pin = inp
+        ; cfg_aux_pin = aux
+        ; cfg_k1 = i.cfg_k1
+        ; cfg_k2 = i.cfg_k2
+        ; cfg_k3 = i.cfg_k3
+        ; pins_sync = synced
+        }
+    in
+    fetch_data <== mux seq.fetch_addr imem;
+    let q =
+      Event_queue.create
+        { clock = i.clock
+        ; clear = i.clear |: start
+        ; t_now
+        ; enq_valid = seq.enq_valid
+        ; enq_due = seq.enq_due
+        ; enq_pin = seq.enq_pin
+        ; enq_value = seq.enq_value
+        }
+    in
+    q_ready <== q.enq_ready;
+    seq, q
   in
-  fetch_data <== mux seq.fetch_addr imem;
-  let q =
-    Event_queue.create
-      { clock = i.clock
-      ; clear = i.clear |: i.start
-      ; t_now
-      ; enq_valid = seq.enq_valid
-      ; enq_due = seq.enq_due
-      ; enq_pin = seq.enq_pin
-      ; enq_value = seq.enq_value
-      }
+  let seq, q =
+    lane
+      ~start:i.start
+      ~entry:i.entry_a
+      ~fifo_valid:i.fifo_valid
+      ~fifo_data:i.fifo_data
+      ~data:i.cfg_data_pin
+      ~clk:i.cfg_clk_pin
+      ~inp:i.cfg_in_pin
+      ~aux:i.cfg_aux_pin
   in
-  q_ready <== q.enq_ready;
-  (* pin drivers *)
+  let seq_b, q_b =
+    lane
+      ~start:i.start_b
+      ~entry:i.entry_b
+      ~fifo_valid:i.fifo_b_valid
+      ~fifo_data:i.fifo_b_data
+      ~data:i.cfg_b_data_pin
+      ~clk:i.cfg_b_clk_pin
+      ~inp:i.cfg_b_in_pin
+      ~aux:i.cfg_b_aux_pin
+  in
+  (* pin drivers: B's fires first, then A's, so A wins a same-cycle conflict *)
   let apply ~valid ~pin ~value k (out, oe) =
     let hit = valid &: (pin ==:. k) in
     let is v = value ==:. v in
@@ -131,20 +192,41 @@ let create (i : _ I.t) : _ O.t =
     List.init n_pins ~f:(fun k ->
       let out = wire 1 and oe = wire 1 in
       let out_q = reg spec out and oe_q = reg spec oe in
-      let o0, e0 =
-        apply ~valid:q.fire0_valid ~pin:q.fire0_pin ~value:q.fire0_value k (out_q, oe_q)
-      in
-      let o1, e1 = apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k (o0, e0) in
+      let st = out_q, oe_q in
+      let st = apply ~valid:q_b.fire0_valid ~pin:q_b.fire0_pin ~value:q_b.fire0_value k st in
+      let st = apply ~valid:q_b.fire1_valid ~pin:q_b.fire1_pin ~value:q_b.fire1_value k st in
+      let st = apply ~valid:q.fire0_valid ~pin:q.fire0_pin ~value:q.fire0_value k st in
+      let o1, e1 = apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k st in
       out <== o1;
       oe <== e1;
       out_q, oe_q)
   in
   (* samples read the synchronized inputs (spec v0.2, input synchronization) *)
   let is_sample v = v ==:. Sequencer.Value.sample in
-  let samp0 = q.fire0_valid &: is_sample q.fire0_value in
-  let samp1 = q.fire1_valid &: is_sample q.fire1_value in
   let bit_at p = mux p (bits_lsb synced) in
-  let sticky x = reg_fb spec ~width:1 ~f:(fun q -> mux2 i.start gnd (q |: x)) in
+  let sampled (q : _ Event_queue.O.t) =
+    let s0 = q.fire0_valid &: is_sample q.fire0_value in
+    let s1 = q.fire1_valid &: is_sample q.fire1_value in
+    s0 |: s1, mux2 s0 (bit_at q.fire0_pin) (bit_at q.fire1_pin)
+  in
+  let sample_valid, sample_bit = sampled q in
+  let sample_valid_b, sample_bit_b = sampled q_b in
+  (* CONFLICT: A and B change the same pin in the same cycle *)
+  let changes valid value = valid &: ~:(is_sample value) in
+  let conflict_now =
+    List.concat_map
+      [ q.fire0_valid, q.fire0_pin, q.fire0_value; q.fire1_valid, q.fire1_pin, q.fire1_value ]
+      ~f:(fun (va, pa, xa) ->
+        List.map
+          [ q_b.fire0_valid, q_b.fire0_pin, q_b.fire0_value
+          ; q_b.fire1_valid, q_b.fire1_pin, q_b.fire1_value
+          ]
+          ~f:(fun (vb, pb, xb) -> changes va xa &: changes vb xb &: (pa ==: pb)))
+    |> reduce ~f:( |: )
+  in
+  let sticky_on start x = reg_fb spec ~width:1 ~f:(fun q -> mux2 start gnd (q |: x)) in
+  let sticky = sticky_on i.start in
+  let sticky_b = sticky_on i.start_b in
   { t_now
   ; pins_out = concat_lsb (List.map pins ~f:fst)
   ; pins_oe = concat_lsb (List.map pins ~f:snd)
@@ -157,8 +239,8 @@ let create (i : _ I.t) : _ O.t =
   ; fire1_valid = q.fire1_valid
   ; fire1_pin = q.fire1_pin
   ; fire1_value = q.fire1_value
-  ; sample_valid = samp0 |: samp1
-  ; sample_bit = mux2 samp0 (bit_at q.fire0_pin) (bit_at q.fire1_pin)
+  ; sample_valid
+  ; sample_bit
   ; late = sticky (q.fire0_late |: q.fire1_late)
   ; order_err = sticky q.order_err
   ; window_err = sticky q.window_err
@@ -168,6 +250,27 @@ let create (i : _ I.t) : _ O.t =
   ; dbg_s = seq.s
   ; dbg_x = seq.x
   ; dbg_y = seq.y
+  ; fifo_b_ready = seq_b.fifo_ready
+  ; halted_b = seq_b.halted
+  ; queue_count_b = q_b.count
+  ; fire0_b_valid = q_b.fire0_valid
+  ; fire0_b_pin = q_b.fire0_pin
+  ; fire0_b_value = q_b.fire0_value
+  ; fire1_b_valid = q_b.fire1_valid
+  ; fire1_b_pin = q_b.fire1_pin
+  ; fire1_b_value = q_b.fire1_value
+  ; sample_valid_b
+  ; sample_bit_b
+  ; late_b = sticky_b (q_b.fire0_late |: q_b.fire1_late)
+  ; order_err_b = sticky_b q_b.order_err
+  ; window_err_b = sticky_b q_b.window_err
+  ; dbg_b_pc = seq_b.pc
+  ; dbg_b_running = seq_b.running
+  ; dbg_b_flag = seq_b.flag
+  ; dbg_b_s = seq_b.s
+  ; dbg_b_x = seq_b.x
+  ; dbg_b_y = seq_b.y
+  ; conflict = sticky_on (i.start |: i.start_b) conflict_now
   }
 ;;
 

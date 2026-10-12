@@ -18,7 +18,7 @@ find the evidence in this repository. Gaps are listed as gaps.
 | Standard settings: I2C at 100 and 400 kHz | Partial | 100 kHz (standard mode) is implemented and characterized; 400 kHz (fast mode) is not yet demonstrated. |
 | Stretch: low-speed USB, 10 Mbit Ethernet | Not attempted | Deliberately out of scope; depth over breadth. |
 | Other protocols worth considering: JTAG, SWD, PS/2, CAN | Partial | JTAG demonstrated (IDCODE). 1-Wire and WS2812 also demonstrated. |
-| Running protocols concurrently; controller and target roles | Not yet | Planned: a second sequencer on the shared timebase (full-duplex UART, controller plus target). |
+| Running protocols concurrently; controller and target roles | Partial | Two sequencers on one shared time base: full-duplex UART demonstrated (`examples/uart_full_duplex.s`: B receives each echo while A transmits the next byte, 9.8 of 10 bits overlapping). A target role (the chip as an I2C EEPROM) is not yet demonstrated. |
 | Use rst_n to reach a known state; reload after reselection | Met | `rst_n` passes a two-flop synchronizer; the host reloads programs (`docs/info.md`). |
 | Program loading through a documented host | Met | SPI host interface and register map (`hw/tt_top.ml`, `docs/info.md`); the demo board's RP2040 is the intended host. |
 
@@ -41,8 +41,8 @@ for run from assembly alone, each verified. Because every protocol lowers to the
 events, every protocol also inherits the same fault injection (skew classes) and measurement
 tools without protocol-specific hardware.
 
-**Protocols demonstrated.** UART, SPI (modes 0 to 3, with late sampling), I2C, WS2812, 1-Wire,
-JTAG.
+**Protocols demonstrated.** UART (including full duplex on two sequencers), SPI (modes 0 to 3,
+with late sampling), I2C, WS2812, 1-Wire, JTAG.
 
 **Something unique the architecture makes possible.** Measured datasheets: the chip moves chosen
 edges by exact amounts, watches the device, and reports what the device actually needs against
@@ -55,12 +55,13 @@ windows), UART (a device's real bit period and sample point) and open-drain rise
 - **Formal proofs, for all time** (`formal/`, run in CI): the event queue fires every event once,
   in order, never early, and exactly on time unless it flags LATE; across the whole core, a pin
   changes only because an event for it fired. Proven by temporal induction with Yosys.
-- **The proofs are tested too:** seven planted bugs (early firing, held-back events, phantom
-  events, a wrong late flag, a pointer-wrap bug, a stray pin path, misordered same-cycle fires)
-  each make a proof fail (`tools/formal_mutants.sh`, in CI).
+- **The proofs are tested too:** eight planted bugs (early firing, held-back events, phantom
+  events, a wrong late flag, a pointer-wrap bug, a stray pin path, misordered same-cycle fires,
+  B overriding A in a conflict) each make a proof fail (`tools/formal_mutants.sh`, in CI).
 - **Three independent models of the chip**, each matched against the RTL cycle for cycle: the
-  executor and on-time model, and a cycle-accurate simulator for reactive programs. Over 850
-  random, stress and reactive programs agree with the RTL in every fire, sample and flag.
+  executor and on-time model, and a cycle-accurate simulator for reactive and two-sequencer
+  programs. Over 850 random, stress and reactive programs, and 150 random pairs of concurrent
+  programs, agree with the RTL in every fire, sample, flag and pin.
 - **RTL equals gates:** `tools/equiv.sh` proves a netlist synthesized with the IHP cells
   equivalent to the RTL at every output, for all inputs and all time (12,486 of 12,487
   register and output points; the last is a bit nothing can read, deleted by synthesis).
@@ -79,5 +80,6 @@ windows), UART (a device's real bit period and sample point) and open-drain rise
 
 - Everything is verified in simulation and formally; nothing has run on an FPGA or silicon yet.
 - Timing resolution is one 20 ns cycle; the sequencer generates SPI up to about 8 MHz.
-- One sequencer: UART is half-duplex until the second sequencer lands.
+- Two sequencers share eight pins; if both change one pin in the same cycle, A wins and
+  CONFLICT is flagged.
 - I/O pad timing for CMOS5L is uncharacterized (no silicon data exists yet for anyone).

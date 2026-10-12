@@ -219,3 +219,125 @@ let%expect_test "device bit period and sample point, from two sweeps" =
     clock 3% slow             447.0 cyc    447.1 cyc          50 %          51 %
     early sampling (35%)      434.0 cyc    434.2 cyc          35 %          36 % |}]
 ;;
+
+(* ---- full duplex on two sequencers ------------------------------------------ *)
+
+let full_duplex () =
+  let src = In_channel.read_all "../examples/uart_full_duplex.s" in
+  let program, labels = Fipe_asm.Text.assemble_with_labels src |> Result.ok_or_failwith in
+  program, List.Assoc.find_exn labels ~equal:String.equal "rx"
+;;
+
+let fd_bytes = [ 0x55; 0xA3; 0x0F ]
+let fd_cfg = { C.Isim.default_config with data_pin = 0; clk_pin = 2; in_pin = 1; aux_pin = 3 }
+let fd_cfg_b = { C.Isim.default_config with data_pin = 5; clk_pin = 6; in_pin = 1; aux_pin = 7 }
+let fd_device () = U.create { (U.nominal ~bit:434.) with reply_delay = 100 }
+
+let%expect_test "full-duplex UART: A transmits while B receives the echoes" =
+  let program, entry_b = full_duplex () in
+  let m =
+    C.Isim.create
+      ~cfg:fd_cfg
+      ~pins:0xFF
+      ~b:(fd_cfg_b, entry_b, [])
+      ~fifo:(List.map fd_bytes ~f:C.Firmware.uart_word)
+      program
+  in
+  let dev = fd_device () in
+  let dev_out = ref true and c = ref 0 in
+  let tx_fall = ref None and rx_fall = ref None and prev_tx = ref true and prev_rx = ref true in
+  while (not (C.Isim.done_ m)) && !c < 100_000 do
+    c := !c + 1;
+    let tx = C.Isim.own_level m 0 in
+    let levels = 0xFF land lnot 3 lor (if tx then 1 else 0) lor if !dev_out then 2 else 0 in
+    if (not tx) && !prev_tx && Option.is_none !tx_fall then tx_fall := Some !c;
+    if (not !dev_out) && !prev_rx && Option.is_none !rx_fall then rx_fall := Some !c;
+    prev_tx := tx;
+    prev_rx := !dev_out;
+    C.Isim.step m ~pins_in:levels;
+    dev_out := U.step dev ~rx_line:(levels land 1 = 1)
+  done;
+  let mb = C.Isim.b_exn m in
+  let bits = List.map (C.Isim.samples mb) ~f:snd in
+  let got = UB.decode (List.map bits ~f:(fun b -> 0, b)) in
+  let t0 = Option.value_exn !tx_fall and r0 = Option.value_exn !rx_fall in
+  let frame = 10 * 434 in
+  printf "program %d words; B starts at address %d\n" (Array.length program) entry_b;
+  printf
+    "sent %s; B received %s; stop bits ok %b\n"
+    (String.concat ~sep:" " (List.map fd_bytes ~f:(Printf.sprintf "%02X")))
+    (String.concat ~sep:" " (List.map got ~f:(fun (b, _) -> Printf.sprintf "%02X" b)))
+    (List.for_all got ~f:snd);
+  printf
+    "flags: A late %b order %b; B late %b order %b; conflict %b; both halted %b\n"
+    m.late
+    m.order_err
+    mb.late
+    mb.order_err
+    m.conflict
+    (C.Isim.done_ m);
+  (* the echo of byte 0 is one frame long; A's byte 1 is the next TX frame *)
+  let overlap = Int.min (r0 + frame) (t0 + (2 * frame)) - Int.max r0 (t0 + frame) in
+  printf
+    "concurrency: B received the echo of byte 0 (cycles %d..%d) while A transmitted byte 1 (cycles %d..%d): %d cycles overlap, %.1f of 10 bits\n"
+    r0
+    (r0 + frame)
+    (t0 + frame)
+    (t0 + (2 * frame))
+    overlap
+    (Float.of_int overlap /. 434.);
+  (* the same run on the RTL loopback *)
+  let sim = Lsim.create L.create in
+  let i : _ L.I.t = Cyclesim.inputs sim in
+  let o : _ L.O.t = Cyclesim.outputs ~clock_edge:Before sim in
+  let dev2 = fd_device () in
+  i.core.clear := Bits.vdd;
+  Cyclesim.cycle sim;
+  i.core.clear := Bits.gnd;
+  Array.iteri program ~f:(fun a ins ->
+    i.core.imem_we := Bits.vdd;
+    set i.core.imem_addr 6 a;
+    set i.core.imem_data 16 (Isa.encode ins);
+    Cyclesim.cycle sim);
+  i.core.imem_we := Bits.gnd;
+  set i.core.cfg_data_pin 3 0;
+  set i.core.cfg_clk_pin 3 2;
+  set i.core.cfg_in_pin 3 1;
+  set i.core.cfg_aux_pin 3 3;
+  set i.core.cfg_b_data_pin 3 5;
+  set i.core.cfg_b_clk_pin 3 6;
+  set i.core.cfg_b_in_pin 3 1;
+  set i.core.cfg_b_aux_pin 3 7;
+  set i.core.entry_b 6 entry_b;
+  i.core.start := Bits.vdd;
+  i.core.start_b := Bits.vdd;
+  Cyclesim.cycle sim;
+  i.core.start := Bits.gnd;
+  i.core.start_b := Bits.gnd;
+  let fifo = ref (List.map fd_bytes ~f:C.Firmware.uart_word) in
+  let samples = Queue.create () in
+  for _ = 1 to !c + 50 do
+    (match !fifo with
+     | w :: _ ->
+       i.core.fifo_valid := Bits.vdd;
+       set i.core.fifo_data 32 w
+     | [] -> i.core.fifo_valid := Bits.gnd);
+    Cyclesim.cycle sim;
+    if Bits.to_bool !(o.core.fifo_ready) then fifo := List.tl_exn !fifo;
+    if Bits.to_bool !(o.core.sample_valid_b) then Queue.enqueue samples (Bits.to_int !(o.core.sample_bit_b));
+    let lv = Bits.to_int !(o.levels) in
+    let out = U.step dev2 ~rx_line:(lv land 1 = 1) in
+    set i.ext_pull_low 8 (if out then 0 else 2)
+  done;
+  printf
+    "RTL: B's samples identical %b, both halted %b, conflict %b\n"
+    ([%equal: int list] (Queue.to_list samples) bits)
+    (Bits.to_bool !(o.core.halted) && Bits.to_bool !(o.core.halted_b))
+    (Bits.to_bool !(o.core.conflict));
+  [%expect {|
+    program 27 words; B starts at address 17
+    sent 55 A3 0F; B received 55 A3 0F; stop bits ok true
+    flags: A late false order false; B late false order false; conflict false; both halted true
+    concurrency: B received the echo of byte 0 (cycles 4741..9081) while A transmitted byte 1 (cycles 4839..9179): 4242 cycles overlap, 9.8 of 10 bits
+    RTL: B's samples identical true, both halted true, conflict false |}]
+;;

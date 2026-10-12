@@ -30,7 +30,17 @@ q "queue fires a phantom second event" "let fire1 = fire0 &: (count.value >:. 1)
 q "late flag set when exactly on time" "  ; fire0_late = fire0 &: is_late e0" "  ; fire0_late = fire0 &: is_due e0"
 q "queue writes the wrong slot on wrap" "when_ (wp.value ==:. k) [ entries.(k) <-- packed ]" "when_ (wp.value ==:. k &: (if k < 3 then vdd else gnd)) [ entries.(k) <-- packed ]"
 c "start pulses a pin directly" "      out <== o1;" "      out <== (if k = 0 then o1 |: i.start else o1);"
-c "same-cycle fires applied out of order" "      let o1, e1 = apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k (o0, e0) in" "      let o1, e1 = apply ~valid:q.fire0_valid ~pin:q.fire0_pin ~value:q.fire0_value k (apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k (out_q, oe_q)) in
-      ignore (o0, e0);"
+c "A's same-cycle fires applied out of order" "      let st = apply ~valid:q.fire0_valid ~pin:q.fire0_pin ~value:q.fire0_value k st in
+      let o1, e1 = apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k st in" "      let st = apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k st in
+      let o1, e1 = apply ~valid:q.fire0_valid ~pin:q.fire0_pin ~value:q.fire0_value k st in"
+c "B overrides A in a same-cycle conflict" "      let st = out_q, oe_q in
+      let st = apply ~valid:q_b.fire0_valid ~pin:q_b.fire0_pin ~value:q_b.fire0_value k st in
+      let st = apply ~valid:q_b.fire1_valid ~pin:q_b.fire1_pin ~value:q_b.fire1_value k st in
+      let st = apply ~valid:q.fire0_valid ~pin:q.fire0_pin ~value:q.fire0_value k st in
+      let o1, e1 = apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k st in" "      let st = out_q, oe_q in
+      let st = apply ~valid:q.fire0_valid ~pin:q.fire0_pin ~value:q.fire0_value k st in
+      let st = apply ~valid:q.fire1_valid ~pin:q.fire1_pin ~value:q.fire1_value k st in
+      let st = apply ~valid:q_b.fire0_valid ~pin:q_b.fire0_pin ~value:q_b.fire0_value k st in
+      let o1, e1 = apply ~valid:q_b.fire1_valid ~pin:q_b.fire1_pin ~value:q_b.fire1_value k st in"
 opam exec -- dune exec bin/gen_verilog.exe -- --formal > /dev/null 2>&1 || dune exec bin/gen_verilog.exe -- --formal > /dev/null 2>&1
 exit $missed

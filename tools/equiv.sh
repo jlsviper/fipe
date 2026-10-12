@@ -12,7 +12,7 @@
 # Passes when every OUTPUT of the gates is proven equal to the RTL's. Internal
 # points left unproven are listed: typically registers synthesis deleted
 # because nothing can observe them (if one could be observed, an output would
-# fail). Takes about 15 minutes and 1.3 GB.
+# fail). Takes about 20 to 40 minutes and 1.3 GB.
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p build

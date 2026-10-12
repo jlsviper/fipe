@@ -3,6 +3,7 @@
      dune exec bin/fasm.exe -- asm  PROGRAM.s [-o PROGRAM.hex]   assemble to a hex image
      dune exec bin/fasm.exe -- dis  PROGRAM.hex                  disassemble a hex image
      dune exec bin/fasm.exe -- list PROGRAM.s                    assemble, show the listing
+     dune exec bin/fasm.exe -- labels PROGRAM.s                  label addresses (entry points)
 
    The hex image has one 16-bit instruction word per line, for the host
    loader (registers 0x00..0x3F over SPI). *)
@@ -27,6 +28,12 @@ let () =
           printf "%s: %d instructions -> %s\n" src (Array.length p) out
         | _ -> print_string hex))
   | [ "dis"; hex ] -> print_string (T.disassemble (T.of_hex (read hex)))
+  | [ "labels"; src ] ->
+    (match T.assemble_with_labels (read src) with
+     | Error e ->
+       eprintf "%s: %s\n" src e;
+       Stdlib.exit 1
+     | Ok (_, labels) -> List.iter labels ~f:(fun (l, a) -> printf "%-12s %d\n" l a))
   | [ "list"; src ] ->
     (match T.assemble (read src) with
      | Error e ->

@@ -29,6 +29,16 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**Two sequencers (chip change: needs a GDS run).** A second sequencer shares the time base and
+program memory (each starts at its own entry address), so concurrent programs land on one time
+axis: concurrency without interleaving. Same-cycle pin conflicts resolve to A and set CONFLICT.
+Full-duplex UART demonstrated (`examples/uart_full_duplex.s`): B receives each echo while A
+transmits the next byte, 9.8 of 10 bits overlapping. With B idle, every earlier test passes
+unchanged; 150 random concurrent program pairs match the RTL in every pin, every cycle; the core
+pin proof covers both sequencers, and eight planted bugs are caught. The gate-level regression
+now runs both sequencers. New registers: ENTRY (0x47), and B's PINS, STATUS, FIFO, SAMPLES and
+DEBUG (0x64 to 0x6A); CTRL bit 3 starts B.
+
 **Gate-level verification.** `tools/equiv.sh` proves the RTL equivalent to an IHP-cell gate
 netlist at every output, for all inputs and all time (12,486 of 12,487 register and output
 points; the last is a shift-register bit nothing reads, which synthesis deletes). The real

@@ -56,6 +56,7 @@ module I = struct
     { clock : 'a
     ; clear : 'a
     ; start : 'a
+    ; entry : 'a [@bits 6] (* program address to start from *)
     ; t_now : 'a [@bits time_bits]
     ; fetch_data : 'a [@bits 16] (* program memory at [fetch_addr] *)
     ; q_ready : 'a
@@ -206,7 +207,7 @@ let create (i : _ I.t) : _ O.t =
     |: (is_jmp &: cond_is Pin &: caught_up &: in_high)
   in
   let next_addr = mux2 taken addr (pc.value +:. 1) in
-  let fetch_addr = mux2 i.start (zero 6) next_addr in
+  let fetch_addr = mux2 i.start i.entry next_addr in
   let blocking =
     (is Isa.Opcode.evt &: ~:evt_go)
     |: (is Isa.Opcode.dly &: ~:dly_go)
@@ -224,7 +225,7 @@ let create (i : _ I.t) : _ O.t =
         i.start
         [ running <-- vdd
         ; halted <-- gnd
-        ; pc <--. 0
+        ; pc <-- i.entry
         ; ir <-- i.fetch_data
         ; far <-- gnd
         ; flag <-- gnd
