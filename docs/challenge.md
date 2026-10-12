@@ -9,7 +9,7 @@ find the evidence in this repository. Gaps are listed as gaps.
 | --- | --- | --- |
 | Open-source, general-purpose protocol emulator ASIC | Met | This repository (Apache-2.0). Protocols are programs, not fixed blocks. |
 | IHP 130 nm CMOS5L through the Tiny Tapeout template, 6x4 tiles | Met | `info.yaml` (6x4, 50 MHz); the `gds` workflow builds from `src/` with the CMOS5L action. |
-| Passing GDS and precheck from the Tiny Tapeout flow | Met | `gds` workflow: DRC 0, LVS 0, precheck green, gate-level cocotb test green. Timing closes at 50 MHz at every corner (slow-corner setup slack about +4.6 ns). |
+| Passing GDS and precheck from the Tiny Tapeout flow | Met | `gds` workflow: DRC 0, LVS 0, antenna 0, precheck green, gate-level tests green (including a 20-program random regression on the post-layout netlist). Timing closes at 50 MHz at every corner (slow-corner setup slack about +4 ns). |
 | A CPU-style engine built for reading pins, writing pins and counting cycles | Met | ISA in `isa/isa.ml` and the spec: timestamped pin events (`evt`), delays, `wait` on a pin, `jmp pin`, counters, a host FIFO. |
 | Reprogrammable for protocols it was not designed for | Met | `examples/ws2812.s`, `examples/onewire_read_rom.s`, `examples/jtag_idcode.s`: assembly only, each verified against a device model and the RTL (`tests/test_flex.ml`). |
 | Start with UART, SPI and I2C | Met | `examples/uart_echo.s`, `spi_read_id.s`, `spi_read_id_late.s`, `i2c_eeprom_write.s`; tests in `tests/test_uart.ml`, `test_spi.ml`, `test_core.ml`, `test_tt_top.ml`. |
@@ -61,6 +61,13 @@ windows), UART (a device's real bit period and sample point) and open-drain rise
 - **Three independent models of the chip**, each matched against the RTL cycle for cycle: the
   executor and on-time model, and a cycle-accurate simulator for reactive programs. Over 850
   random, stress and reactive programs agree with the RTL in every fire, sample and flag.
+- **RTL equals gates:** `tools/equiv.sh` proves a netlist synthesized with the IHP cells
+  equivalent to the RTL at every output, for all inputs and all time (12,486 of 12,487
+  register and output points; the last is a bit nothing can read, deleted by synthesis).
+  Runs in CI whenever the chip changes (`equiv` workflow).
+- **The real post-layout netlist** (every buffer, hold-fix cell and antenna diode) runs 20
+  random programs with random pin roles, skews, monitor setups and input waveforms, and
+  must reproduce the RTL's output record exactly; CI runs it on every GDS build.
 - **Clock-domain crossing:** a netlist checker proves every asynchronous input passes a two-flop
   synchronizer, on the post-layout netlist as well (`tools/cdc_check.py`, in CI).
 - **A machine-checked timing spec** drives a symbolic checker and the on-chip monitors; the two

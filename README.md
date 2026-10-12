@@ -14,6 +14,8 @@ The architecture spec is the source of design intent; this repo implements it.
 | `checker/` | Executor, symbolic and concrete checker, on-time cycle model, cycle-accurate simulator (`isim.ml`, handles reactive programs), monitor compiler, assembler, firmware. |
 | `model/` | Device and reference models: event queue, I2C EEPROM, SPI device, UART echo device, each with realistic failure mechanisms. |
 | `formal/` | Formal proofs of the timing contract (Yosys temporal induction); `tools/formal.sh` runs them, `tools/formal_mutants.sh` checks each planted bug makes a proof fail. |
+| `tools/equiv.sh` | Formal equivalence: RTL against an IHP-cell gate netlist, every output proven (the `equiv` workflow). |
+| `test/regress/` | Random programs and the RTL's golden output record for the gate-level regression in `test/test.py`. |
 | `docs/challenge.md` | Every requirement and judging criterion from the competition, mapped to evidence. |
 | `tools/cdc_check.py` | Netlist proof that every asynchronous input passes a two-flop synchronizer (runs in CI; also on post-layout netlists). |
 | `bench/` | Simulated bench: a fast bus model proven against the RTL, sweep strategies, hole detection, population statistics. |
@@ -26,6 +28,15 @@ The architecture spec is the source of design intent; this repo implements it.
 | `.github/workflows/` | `gds` (RTL to GDS, precheck, gate-level test), `test` (cocotb), `docs`, `ocaml` (our regression). |
 
 ## Status
+
+**Gate-level verification.** `tools/equiv.sh` proves the RTL equivalent to an IHP-cell gate
+netlist at every output, for all inputs and all time (12,486 of 12,487 register and output
+points; the last is a shift-register bit nothing reads, which synthesis deletes). The real
+post-layout netlist runs a 20-program random regression (random pin roles, skews, monitor
+setups, FIFO data and input waveforms) and reproduces the RTL's output record exactly; CI's
+gate-level test runs it on every GDS build. `formal/README.md` explains the proofs. After
+changing the chip, refresh the golden record with
+`cd test && REGRESS_UPDATE=1 make COCOTB_TEST_FILTER=test_regress`.
 
 **Formal proofs (chip change: needs a GDS run).** The timing contract is proven for all time by
 temporal induction: the event queue fires every event once, in order, never early, and exactly on

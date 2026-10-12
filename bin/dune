@@ -5,3 +5,7 @@
 (executable
  (name fasm)
  (libraries base stdio fipe_asm))
+
+(executable
+ (name gen_regress)
+ (libraries base stdio fipe_isa))
