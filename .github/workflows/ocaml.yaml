@@ -32,3 +32,9 @@ jobs:
 
       - name: Every asynchronous input passes a two-flop synchronizer
         run: ./tools/cdc_check.sh
+
+      - name: Formal proofs of the timing contract (for all time)
+        run: ./tools/formal.sh
+
+      - name: The proofs catch every planted bug (mutation tests)
+        run: ./tools/formal_mutants.sh

@@ -67,9 +67,14 @@ end
 let create (i : _ I.t) : _ O.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
   let t_now = reg_fb spec ~width:Event_queue.time_bits ~f:(fun t -> t +:. 1) in
+  (* Program memory has no clear: the host loads a program before every start
+     (state is lost when the design is deselected anyway), so clearing it would
+     only cost a gate in front of each of its 1,024 flip-flops and a reset net
+     reaching all of them. Unwritten words are undefined after power-up. *)
+  let imem_spec = Reg_spec.create ~clock:i.clock () in
   let imem =
     List.init imem_words ~f:(fun k ->
-      reg spec ~enable:(i.imem_we &: (i.imem_addr ==:. k)) i.imem_data)
+      reg imem_spec ~enable:(i.imem_we &: (i.imem_addr ==:. k)) i.imem_data)
   in
   let q_ready = wire 1 in
   (* The sequencer computes the next fetch address from registers (its

@@ -57,7 +57,22 @@ let due_of e = select e (entry_bits - 1) (pin_bits + value_bits)
 let pin_of e = select e (pin_bits + value_bits - 1) value_bits
 let value_of e = select e (value_bits - 1) 0
 
-let create (i : _ I.t) : _ O.t =
+(* Internal state, exposed only for formal verification (see formal/). *)
+module Obs = struct
+  type 'a t =
+    { e0 : 'a [@bits entry_bits]
+    ; e1 : 'a [@bits entry_bits]
+    ; e2 : 'a [@bits entry_bits]
+    ; e3 : 'a [@bits entry_bits]
+    ; rp : 'a [@bits ptr_bits]
+    ; wp : 'a [@bits ptr_bits]
+    ; last_due : 'a [@bits time_bits]
+    ; last_valid : 'a
+    }
+  [@@deriving sexp_of, hardcaml]
+end
+
+let create_observed (i : _ I.t) : _ O.t * _ Obs.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
   let open Always in
   let entries = Array.init depth ~f:(fun _ -> Variable.reg spec ~width:entry_bits) in
@@ -94,7 +109,7 @@ let create (i : _ I.t) : _ O.t =
          @ List.init depth ~f:(fun k ->
            when_ (wp.value ==:. k) [ entries.(k) <-- packed ]))
     ];
-  { enq_ready
+  ( { enq_ready
   ; fire0_valid = fire0
   ; fire0_pin = pin_of e0
   ; fire0_value = value_of e0
@@ -107,6 +122,33 @@ let create (i : _ I.t) : _ O.t =
   ; window_err
   ; count = count.value
   }
+  , { Obs.e0 = entries.(0).value
+    ; e1 = entries.(1).value
+    ; e2 = entries.(2).value
+    ; e3 = entries.(3).value
+    ; rp = rp.value
+    ; wp = wp.value
+    ; last_due = last_due.value
+    ; last_valid = last_valid.value
+    } )
+;;
+
+let create i = fst (create_observed i)
+
+(* The queue with its internal state on extra outputs, for the formal proof. *)
+module O_formal = struct
+  type 'a t =
+    { o : 'a O.t [@rtlprefix ""]
+    ; obs : 'a Obs.t [@rtlprefix "obs_"]
+    }
+  [@@deriving sexp_of, hardcaml]
+end
+
+let circuit_formal () =
+  let module C = Circuit.With_interface (I) (O_formal) in
+  C.create_exn ~name:"fipe_event_queue_formal" (fun i ->
+    let o, obs = create_observed i in
+    { O_formal.o; obs })
 ;;
 
 let circuit () =

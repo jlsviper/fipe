@@ -33,6 +33,14 @@
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
+  "//": "FIPE: stronger antenna repair. One build left 2 nets with antenna violations;",
+  "//": "these allow more repair passes with a larger safety margin, in global and",
+  "//": "detailed routing. Names checked against LibreLane 3.1.0.dev3 (defaults 3 and 10%).",
+  "GRT_ANTENNA_REPAIR_ITERS": 6,
+  "GRT_ANTENNA_REPAIR_MARGIN": 20,
+  "DRT_ANTENNA_REPAIR_ITERS": 6,
+  "DRT_ANTENNA_REPAIR_MARGIN": 20,
+
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
   "//": "!!! DO NOT CHANGE ANYTHING BELOW THIS POINT !!!",
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",

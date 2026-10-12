@@ -1,5 +1,6 @@
 (* Writes the Verilog the Tiny Tapeout flow builds: src/<top>.v.
    With --components, also writes each block to build/ for area studies.
+   With --formal, writes the blocks the formal proofs in formal/ need.
    Run from the repo root: dune exec bin/gen_verilog.exe *)
 open! Base
 open Hardcaml
@@ -18,5 +19,10 @@ let () =
     ignore (Stdlib.Sys.command "mkdir -p build" : int);
     write "build/fipe_event_queue.v" (Fipe_hw.Event_queue.circuit ());
     write "build/fipe_core.v" (Fipe_hw.Core.circuit ());
-    write "build/fipe_monitors.v" (Fipe_hw.Monitors.circuit ()))
+    write "build/fipe_monitors.v" (Fipe_hw.Monitors.circuit ()));
+  if Array.exists (Sys.get_argv ()) ~f:(String.equal "--formal")
+  then (
+    ignore (Stdlib.Sys.command "mkdir -p build" : int);
+    write "build/fipe_event_queue_formal.v" (Fipe_hw.Event_queue.circuit_formal ());
+    write "build/fipe_core.v" (Fipe_hw.Core.circuit ()))
 ;;

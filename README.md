@@ -13,6 +13,8 @@ The architecture spec is the source of design intent; this repo implements it.
 | `spec/` | Protocol timing specs, the single source of truth for "correct" (I2C standard mode so far). |
 | `checker/` | Executor, symbolic and concrete checker, on-time cycle model, cycle-accurate simulator (`isim.ml`, handles reactive programs), monitor compiler, assembler, firmware. |
 | `model/` | Device and reference models: event queue, I2C EEPROM, SPI device, UART echo device, each with realistic failure mechanisms. |
+| `formal/` | Formal proofs of the timing contract (Yosys temporal induction); `tools/formal.sh` runs them, `tools/formal_mutants.sh` checks each planted bug makes a proof fail. |
+| `docs/challenge.md` | Every requirement and judging criterion from the competition, mapped to evidence. |
 | `tools/cdc_check.py` | Netlist proof that every asynchronous input passes a two-flop synchronizer (runs in CI; also on post-layout netlists). |
 | `bench/` | Simulated bench: a fast bus model proven against the RTL, sweep strategies, hole detection, population statistics. |
 | `hw/` | Hardcaml RTL: event queue, sequencer, core, monitors, host SPI, Tiny Tapeout top. |
@@ -24,6 +26,13 @@ The architecture spec is the source of design intent; this repo implements it.
 | `.github/workflows/` | `gds` (RTL to GDS, precheck, gate-level test), `test` (cocotb), `docs`, `ocaml` (our regression). |
 
 ## Status
+
+**Formal proofs (chip change: needs a GDS run).** The timing contract is proven for all time by
+temporal induction: the event queue fires every event once, in order, never early, and exactly on
+time unless it flags LATE (checked against an ideal reference queue); across the whole core, a pin
+changes only because an event for it fired. Seven planted bugs each make a proof fail; both run in
+CI. Also: the program memory no longer has a clear (10% fewer cells), stronger antenna repair in
+`src/config.json`, and `docs/challenge.md` maps every competition requirement to evidence.
 
 **Toolchain and flexibility (chip change: needs a GDS run).** `fasm` assembles and disassembles
 FIPE assembly; all 12,110 legal instruction words round-trip, and every example that documents
@@ -190,8 +199,9 @@ so a timing change shows up in code review as a picture.
 
 ## Next
 
-1. GDS run for this batch; timing and CDC check on its post-layout netlist.
-1a. I2C target role (the chip as an EEPROM); FPGA bring-up with real parts.
+1. GDS run for this batch: timing, antenna count, runtime, CDC on the post-layout netlist.
+1a. Second sequencer on the shared timebase (full-duplex UART, controller plus target).
+1b. FPGA bring-up with real parts (Icepi Zero); I2C at 400 kHz; export the spec into the repo.
 1b. Formal proof of the timing contract; reduce hold-fix cells.
 2. Device-side monitors: count an edge only while our own driver is released, so the monitors
    measure the device's outputs (ACK delay, clock stretching).
