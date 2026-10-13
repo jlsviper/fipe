@@ -3,7 +3,7 @@ pins bfd
 skew f0100
 seed 383318
 pins_b c87
-entry_b 21
+entry_b 32
 mon 0 cb01c356 7f4bcb3 1
 mon 1 997b7b27 2940b30e 2
 mon 2 edb83d43 20d43cc3 1
@@ -38,9 +38,20 @@ word 11e7
 word 117b
 word 4014
 word 0000
-word 421a
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 4225
 word 2005
 word 11c4
 word 3480
 word 0000
-word 401b
+word 4026

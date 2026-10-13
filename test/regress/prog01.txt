@@ -3,7 +3,7 @@ pins ba8
 skew c0f03
 seed 421489
 pins_b 643
-entry_b 12
+entry_b 32
 mon 0 d5b436bd 3fd93069 6
 mon 1 48920b1f 317f3b98 6
 mon 2 857b5a4b 2cb73a47 6
@@ -28,6 +28,26 @@ word 10b3
 word 4002
 word 7400
 word 400b
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 11a4
 word 550c
 word 7400
@@ -41,9 +61,9 @@ word 142a
 word 1148
 word 0000
 word 5020
-word 441e
+word 4432
 word 3300
 word 1027
-word 400c
+word 4020
 word 0000
-word 401e
+word 4032

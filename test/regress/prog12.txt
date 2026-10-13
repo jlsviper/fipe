@@ -3,7 +3,7 @@ pins af
 skew 3020e
 seed 707451
 pins_b a03
-entry_b 13
+entry_b 32
 mon 0 1c9e5deb 28efeb2b 6
 mon 1 d23da2fd 2cd0b4b6 2
 mon 2 fe12dbba 356ec116 3
@@ -29,9 +29,28 @@ word 5701
 word 3300
 word 4403
 word 400c
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 14ec
 word 12fb
 word 7400
 word 1122
 word 147d
-word 4012
+word 4025

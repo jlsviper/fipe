@@ -3,7 +3,7 @@ pins 74c
 skew b0b0c
 seed 715120
 pins_b c8b
-entry_b 21
+entry_b 32
 mon 0 6d0ec97d 33cf2b89 0
 mon 1 7923ace9 2cb6c10b 7
 mon 2 a30dc52c 203330b8 0
@@ -37,10 +37,21 @@ word 136e
 word 4002
 word 4102
 word 4014
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 11c8
-word 4315
+word 4320
 word 1769
-word 4115
+word 4120
 word 7400
 word 7400
 word 1640
@@ -54,4 +65,4 @@ word 2018
 word 2034
 word 1455
 word 16a5
-word 4026
+word 4031

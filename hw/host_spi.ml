@@ -26,8 +26,9 @@ module I = struct
     ; cs_n : 'a
     ; mosi : 'a
     ; rdata : 'a [@bits 32] (* register at [addr], combinational *)
+    ; frame_err_clear : 'a
     }
-  [@@deriving sexp_of, hardcaml]
+    [@@deriving sexp_of, hardcaml]
 end
 
 module O = struct
@@ -36,6 +37,7 @@ module O = struct
     ; addr : 'a [@bits 7]
     ; wr_strobe : 'a
     ; wdata : 'a [@bits 32]
+    ; frame_err : 'a (* sticky: a frame was not exactly 40 clocks *)
     }
   [@@deriving sexp_of, hardcaml]
 end
@@ -59,7 +61,21 @@ let create (i : _ I.t) : _ O.t =
   let miso = Variable.reg spec ~width:1 in
   let wr = Variable.reg spec ~width:1 in
   let wdata = Variable.reg spec ~width:32 in
+  List.iter
+    [ "bitcnt", bitcnt; "shift_in", shift_in; "cmd", cmd; "load", load; "out", out; "miso", miso
+    ; "wr", wr; "wdata", wdata
+    ]
+    ~f:(fun (n, (v : Always.Variable.t)) -> ignore (Signal.( -- ) v.value ("spi_" ^ n) : Signal.t));
   let next_in = lsbs shift_in.value @: mosi in
+  (* FRAME: a 41st clock while selected (overrun), or deselect after a partial
+     frame (a short write does nothing, silently, without this flag) *)
+  let cs_prev = reg spec cs_n in
+  let deselect = cs_n &: ~:cs_prev in
+  let overrun = rise &: (bitcnt.value >=:. 40) in
+  let short = deselect &: (bitcnt.value <>:. 0) &: (bitcnt.value <>:. 40) in
+  let frame_err =
+    reg_fb spec ~width:1 ~f:(fun q -> mux2 i.frame_err_clear gnd (q |: overrun |: short))
+  in
   let is_write = msb cmd.value in
   compile
     [ wr <-- gnd
@@ -87,5 +103,6 @@ let create (i : _ I.t) : _ O.t =
   ; addr = select cmd.value 6 0
   ; wr_strobe = wr.value
   ; wdata = wdata.value
+  ; frame_err
   }
 ;;

@@ -13,7 +13,7 @@ let%expect_test "assembler and disassembler are exact inverses on every legal wo
     | Some i ->
       Int.incr checked;
       let text = T.disassemble [| i |] in
-      (match T.assemble text with
+      (match T.assemble ~allow_reserved:true text with
        | Ok [| j |] when Isa.encode j = w -> ()
        | r ->
          Int.incr bad;
@@ -97,4 +97,25 @@ let%expect_test "every example assembles to its verified firmware, word for word
     spi_read_id_late   17 words  identical to firmware
     uart_echo          22 words  identical to firmware
     rise_time           6 words  identical to firmware |}]
+;;
+
+let%expect_test "reserved instructions are refused unless allowed" =
+  List.iter
+    [ "set pindir, 3"; "push"; "pull noblock"; "jmp cap_ready, 0"; "set x, 3" ]
+    ~f:(fun src ->
+      printf
+        "%-18s default: %s | allowed: %s\n"
+        src
+        (match T.assemble src with
+         | Ok _ -> "ok"
+         | Error e -> if String.is_substring e ~substring:"reserved" then "refused (reserved)" else e)
+        (match T.assemble ~allow_reserved:true src with
+         | Ok _ -> "ok"
+         | Error e -> e));
+  [%expect {|
+    set pindir, 3      default: refused (reserved) | allowed: ok
+    push               default: refused (reserved) | allowed: ok
+    pull noblock       default: refused (reserved) | allowed: ok
+    jmp cap_ready, 0   default: refused (reserved) | allowed: ok
+    set x, 3           default: ok | allowed: ok |}]
 ;;

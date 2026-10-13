@@ -3,7 +3,7 @@ pins 669
 skew 30e02
 seed 685026
 pins_b fc4
-entry_b 9
+entry_b 32
 mon 0 fd12f5b2 219fc1b8 1
 mon 1 3044b360 13986ed2 2
 mon 2 96926245 3ee1d4be 2
@@ -25,6 +25,29 @@ word 5508
 word 0000
 word 5007
 word 4008
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 104f
 word 1701
 word 2018
@@ -34,11 +57,11 @@ word 5111
 word 140a
 word 201c
 word 5504
-word 440d
+word 4424
 word 3340
-word 4213
+word 422a
 word 7400
 word 0000
 word 136a
 word 501f
-word 4019
+word 4030

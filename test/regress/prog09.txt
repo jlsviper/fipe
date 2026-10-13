@@ -3,7 +3,7 @@ pins 977
 skew 906
 seed 996001
 pins_b e0b
-entry_b 18
+entry_b 32
 mon 0 76ee33a8 de8f890 5
 mon 1 c8f89cf3 277c2ee0 3
 mon 2 aa464aea 31eed05a 6
@@ -35,6 +35,20 @@ word 3480
 word 13b0
 word 4011
 word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 7400
 word 118f
 word 11c6
@@ -42,14 +56,14 @@ word 5009
 word 117d
 word 5125
 word 201e
-word 4217
+word 4225
 word 5701
-word 401b
+word 4029
 word 104d
 word 5014
-word 4418
+word 4426
 word 511c
-word 4423
+word 4431
 word 13d2
 word 104d
-word 4024
+word 4032

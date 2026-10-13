@@ -3,7 +3,7 @@ pins 70c
 skew 40c00
 seed 529907
 pins_b 38d
-entry_b 19
+entry_b 32
 mon 0 844f5c0b 127ec3bb 2
 mon 1 87ab0337 2d73f9eb 5
 mon 2 f3de3206 9286fcd 2
@@ -35,6 +35,19 @@ word 5124
 word 1199
 word 500a
 word 4012
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 3240
 word 203a
 word 5500
@@ -46,7 +59,7 @@ word 0000
 word 16aa
 word 7400
 word 5006
-word 4417
+word 4424
 word 13b6
 word 5115
-word 4021
+word 402e

@@ -270,6 +270,8 @@ type dual_obs =
   ; b : obs
   ; conflict : bool
   ; pin_trace : (int * int) list (* pins_out, pins_oe, every cycle *)
+  ; traps : (bool * int option) * (bool * int option)
+    (* per sequencer: trapped, and the program counter if halted *)
   }
 [@@deriving sexp, equal]
 
@@ -355,6 +357,9 @@ let rtl_dual ~(cfg : C.Isim.config) ~(cfg_b : C.Isim.config) ~entry_b ~stim ~fif
       }
   ; conflict = b o.conflict
   ; pin_trace = Queue.to_list trace
+  ; traps =
+      ( (b o.trapped, Option.some_if (b o.halted) (n o.dbg_pc))
+      , (b o.trapped_b, Option.some_if (b o.halted_b) (n o.dbg_b_pc)) )
   }
 ;;
 
@@ -376,7 +381,14 @@ let model_dual ~cfg ~cfg_b ~entry_b ~stim ~fifo ~fifo_b ~cycles program =
     ; window_err = x.window_err
     }
   in
-  { a = lane m; b = lane mb; conflict = m.conflict; pin_trace = Queue.to_list trace }
+  { a = lane m
+  ; b = lane mb
+  ; conflict = m.conflict
+  ; pin_trace = Queue.to_list trace
+  ; traps =
+      ( (m.trapped, Option.some_if m.halted m.pc)
+      , (mb.trapped, Option.some_if mb.halted mb.pc) )
+  }
 ;;
 
 let%expect_test "two sequencers: simulator matches the RTL on random program pairs" =
@@ -397,8 +409,15 @@ let%expect_test "two sequencers: simulator matches the RTL on random program pai
   in
   for _ = 1 to n do
     let la = 4 + Random.State.int rand 24 and lb = 4 + Random.State.int rand 24 in
-    let entry_b = la + 1 in
-    let program = Array.append (gen_region rand ~base:0 ~len:la) (gen_region rand ~base:entry_b ~len:lb) in
+    (* B runs from the upper half of program memory *)
+    let entry_b = 32 in
+    let program =
+      Array.concat
+        [ gen_region rand ~base:0 ~len:la
+        ; Array.create ~len:(entry_b - la - 1) Isa.Nop
+        ; gen_region rand ~base:entry_b ~len:lb
+        ]
+    in
     let stim = stimulus rand ~cycles in
     let words () = List.init 32 ~f:(fun _ -> Random.State.bits rand land 0xFFFF_FFFF) in
     let fifo = words () and fifo_b = words () in
@@ -433,4 +452,54 @@ let%expect_test "two sequencers: simulator matches the RTL on random program pai
   [%expect {|
     150 of 150 program pairs identical over 2000 cycles (both lanes' fires, samples, flags, halts, CONFLICT, and every pin every cycle)
     3 pairs set CONFLICT; 81 pairs had both sequencers halt |}]
+;;
+
+(* A random legal-but-reserved instruction: sample words until one decodes to
+   an instruction this revision does not implement. *)
+let rec random_reserved rand =
+  match Isa.decode (Random.State.int rand 0x10000) with
+  | Some i when not (Isa.implemented i) -> i
+  | _ -> random_reserved rand
+;;
+
+let%expect_test "traps: reserved instructions halt both models at the same cycle and address" =
+  let rand = Random.State.make [| 33 |] in
+  let cycles = 1_500 and n = 100 in
+  let same = ref 0 and trapped_a = ref 0 and trapped_b = ref 0 in
+  for _ = 1 to n do
+    let la = 4 + Random.State.int rand 24 and lb = 4 + Random.State.int rand 24 in
+    let entry_b = 32 in
+    let pa = gen_region rand ~base:0 ~len:la and pb = gen_region rand ~base:entry_b ~len:lb in
+    (* plant a reserved instruction in A, B or both, never on the final halt *)
+    let plant p = p.(Random.State.int rand (Array.length p - 1)) <- random_reserved rand in
+    (match Random.State.int rand 3 with
+     | 0 -> plant pa
+     | 1 -> plant pb
+     | _ ->
+       plant pa;
+       plant pb);
+    let program = Array.concat [ pa; Array.create ~len:(entry_b - la - 1) Isa.Nop; pb ] in
+    let stim = stimulus rand ~cycles in
+    let words () = List.init 32 ~f:(fun _ -> Random.State.bits rand land 0xFFFF_FFFF) in
+    let fifo = words () and fifo_b = words () in
+    let cfg = { C.Isim.default_config with data_pin = 0; clk_pin = 1; in_pin = 2; aux_pin = 3 } in
+    let cfg_b = { C.Isim.default_config with data_pin = 4; clk_pin = 5; in_pin = 6; aux_pin = 7 } in
+    let r = rtl_dual ~cfg ~cfg_b ~entry_b ~stim ~fifo ~fifo_b ~cycles program in
+    let m = model_dual ~cfg ~cfg_b ~entry_b ~stim ~fifo ~fifo_b ~cycles program in
+    if fst (fst r.traps) then Int.incr trapped_a;
+    if fst (snd r.traps) then Int.incr trapped_b;
+    if equal_dual_obs r m
+    then Int.incr same
+    else print_s [%message "DIFFERS" (r.traps : (bool * int option) * (bool * int option)) (m.traps : (bool * int option) * (bool * int option))]
+  done;
+  printf
+    "%d of %d program pairs identical (fires, samples, flags, pins every cycle, trap and stop address)\n\
+     A trapped in %d, B in %d (the rest jumped past the planted instruction or halted first)\n"
+    !same
+    n
+    !trapped_a
+    !trapped_b;
+  [%expect {|
+    100 of 100 program pairs identical (fires, samples, flags, pins every cycle, trap and stop address)
+    A trapped in 45, B in 46 (the rest jumped past the planted instruction or halted first) |}]
 ;;

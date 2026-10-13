@@ -11,14 +11,17 @@
    Register map (7-bit address; W = write, R = read):
      0x00-0x3F W  program memory word (data bits 15..0)
      0x40      W  CTRL: bit 0 start A, bit 1 clear monitors, bit 2 clear sample
-                  logs, bit 3 start B (bits 0 and 3 together: same cycle)
+                  logs, bit 3 start B (bits 0 and 3 together: same cycle),
+                  bit 4 clear FRAME
      0x41      RW PINS: data pin [2:0], clock pin [5:3], input pin [8:6],
                   auxiliary pin [11:9]
      0x42      RW SKEW: K1 [7:0], K2 [15:8], K3 [23:16] (signed)
      0x43      W  push one word into the 4-deep host data FIFO
      0x44      R  STATUS: [0] halted [1] late [2] order [3] window
                   [6:4] queue count [10:8] FIFO count [21:16] samples logged
-                  [27:24] monitor violations (sticky) [28] ena [31:29] unused
+                  [7] TRAP (halted on an illegal or reserved instruction; the
+                  debug PC shows where) [27:24] monitor violations (sticky)
+                  [28] ena [29] CONFLICT [30] FRAME [31] unused
      0x45      R  SAMPLES: last 32 sampled bits, newest in bit 0
      0x46      R  INPUTS: IN0..IN4 levels [4:0]
      0x47      RW ENTRY: sequencer A start address [5:0], B [13:8]
@@ -28,6 +31,8 @@
                    [8:6] qualifier pin [9] qualifier level)
      0x49+3s   RW monitor slot s, word B: min cycles [15:0], max cycles [31:16]
      0x4A+3s   RW monitor slot s, word C: [0] enable [1] min enable [2] max enable
+                  [3] start, [4] stop, [5] abort: device edges only
+                  [7:6] prescale: tick every 1, 16, 256, 4096 cycles
      0x58+s    R  monitor slot s: min seen [15:0], max seen [31:16]
      0x5C      R  monitor counts: slot s in bits [8s+7:8s]
      0x60      R  DEBUG: [5:0] program counter [6] running [7] halted [8] flag
@@ -45,6 +50,8 @@
      0x6A      R  DEBUG_B: B's X [15:0], Y [31:16]
    STATUS [29] (and STATUS_B [29]): CONFLICT, A and B changed the same pin
    in one cycle (A wins); sticky until either sequencer starts.
+   STATUS [30]: FRAME, a host SPI frame was not exactly 40 clocks (overrun, or
+   deselected early); sticky until CTRL bit 4.
      0x7F      R  ID: 0x46495045, ASCII "FIPE" *)
 open! Base
 open Hardcaml
@@ -73,30 +80,32 @@ module O = struct
   [@@deriving sexp_of, hardcaml]
 end
 
+(* Addresses, looked up by name in the one register map (hw/regmap.ml) *)
 module Reg = struct
-  let ctrl = 0x40
-  let pins = 0x41
-  let skew = 0x42
-  let fifo = 0x43
-  let status = 0x44
-  let samples = 0x45
-  let inputs = 0x46
-  let entry = 0x47
-  let mon_cfg = 0x48 (* + 3s + word *)
-  let mon_seen = 0x58 (* + s *)
-  let mon_counts = 0x5C
-  let dbg_state = 0x60
-  let dbg_s = 0x61
-  let dbg_t = 0x62
-  let dbg_xy = 0x63
-  let pins_b = 0x64
-  let status_b = 0x65
-  let fifo_b = 0x66
-  let samples_b = 0x67
-  let dbg_b_state = 0x68
-  let dbg_b_s = 0x69
-  let dbg_b_xy = 0x6A
-  let id = 0x7F
+  let a = Regmap.addr
+  let ctrl = a "CTRL"
+  let pins = a "PINS"
+  let skew = a "SKEW"
+  let fifo = a "FIFO"
+  let status = a "STATUS"
+  let samples = a "SAMPLES"
+  let inputs = a "INPUTS"
+  let entry = a "ENTRY"
+  let mon_cfg = a "MON0_A" (* + 3s + word *)
+  let mon_seen = a "MON0_SEEN" (* + s *)
+  let mon_counts = a "MON_COUNTS"
+  let dbg_state = a "DEBUG"
+  let dbg_s = a "DEBUG_S"
+  let dbg_t = a "DEBUG_T"
+  let dbg_xy = a "DEBUG_XY"
+  let pins_b = a "PINS_B"
+  let status_b = a "STATUS_B"
+  let fifo_b = a "FIFO_B"
+  let samples_b = a "SAMPLES_B"
+  let dbg_b_state = a "DEBUG_B"
+  let dbg_b_s = a "DEBUG_B_S"
+  let dbg_b_xy = a "DEBUG_B_XY"
+  let id = a "ID"
 end
 
 let create (i : _ I.t) : _ O.t =
@@ -113,6 +122,7 @@ let create (i : _ I.t) : _ O.t =
   let in_sync = sync2 (select i.ui_in 7 3) in
   let ena_sync = sync2 i.ena in
   let rdata = wire 32 in
+  let frame_err_clear = wire 1 in
   let spi =
     Host_spi.create
       { clock = i.clk
@@ -121,6 +131,7 @@ let create (i : _ I.t) : _ O.t =
       ; cs_n = bit i.ui_in 1
       ; mosi = bit i.ui_in 2
       ; rdata
+      ; frame_err_clear
       }
   in
   let wr a = spi.wr_strobe &: (spi.addr ==:. a) in
@@ -132,6 +143,7 @@ let create (i : _ I.t) : _ O.t =
   let mon_clear = ctrl &: bit wd 1 in
   let sample_clear = ctrl &: bit wd 2 in
   let start_b = ctrl &: bit wd 3 in
+  frame_err_clear <== (ctrl &: bit wd 4);
   let pins = rw_reg Reg.pins 12 in
   let pins_b = rw_reg Reg.pins_b 12 in
   let entry = rw_reg Reg.entry 14 in
@@ -211,7 +223,8 @@ let create (i : _ I.t) : _ O.t =
   in
   (* monitors, configured through registers *)
   let n = Monitors.n_slots in
-  let cfg s w = rw_reg (Reg.mon_cfg + (3 * s) + w) 32 in
+  (* words A and B use all 32 bits; word C stores only its 8 defined bits *)
+  let cfg s w = uresize (rw_reg (Reg.mon_cfg + (3 * s) + w) (if w = 2 then 8 else 32)) 32 in
   let words = List.init n ~f:(fun s -> cfg s 0, cfg s 1, cfg s 2) in
   let fa f = List.map words ~f:(fun (a, _, _) -> f a) in
   let fb f = List.map words ~f:(fun (_, b, _) -> f b) in
@@ -231,6 +244,7 @@ let create (i : _ I.t) : _ O.t =
       { clock = i.clk
       ; clear
       ; pins = i.uio_in
+      ; pins_oe = core.pins_oe
       ; mon_clear
       ; en = fc (fun c -> bit c 0)
       ; keep_first = fa (fun a -> bit a 0)
@@ -254,6 +268,10 @@ let create (i : _ I.t) : _ O.t =
       ; min_cyc = fb (fun b -> select b 15 0)
       ; max_en = fc (fun c -> bit c 2)
       ; max_cyc = fb (fun b -> select b 31 16)
+      ; st_dev = fc (fun c -> bit c 3)
+      ; sp_dev = fc (fun c -> bit c 4)
+      ; ab_dev = fc (fun c -> bit c 5)
+      ; prescale = fc (fun c -> select c 7 6)
       }
   in
   let viol_sticky = concat_lsb mon.viol_sticky in
@@ -266,7 +284,7 @@ let create (i : _ I.t) : _ O.t =
       ; core.order_err
       ; core.window_err
       ; core.queue_count
-      ; gnd
+      ; core.trapped
       ; fcount
       ; zero 5
       ; sample_count
@@ -274,7 +292,8 @@ let create (i : _ I.t) : _ O.t =
       ; viol_sticky
       ; ena_sync
       ; core.conflict
-      ; zero 2
+      ; spi.frame_err
+      ; gnd
       ]
   in
   let status_b =
@@ -284,7 +303,7 @@ let create (i : _ I.t) : _ O.t =
       ; core.order_err_b
       ; core.window_err_b
       ; core.queue_count_b
-      ; gnd
+      ; core.trapped_b
       ; fcount_b
       ; zero 5
       ; sample_count_b
@@ -341,6 +360,12 @@ let create (i : _ I.t) : _ O.t =
     @ List.init n ~f:(fun s ->
       Reg.mon_seen + s, List.nth_exn mon.max_seen s @: List.nth_exn mon.min_seen s)
   in
+  (* the register map is the one source: what can be read here must be exactly
+     what hw/regmap.ml says is readable *)
+  (let here = List.map reads ~f:fst |> List.sort ~compare:Int.compare in
+   let map = List.sort Regmap.readable ~compare:Int.compare in
+   if not ([%equal: int list] here map)
+   then raise_s [%message "read-back disagrees with hw/regmap.ml" (here : int list) (map : int list)]);
   rdata
   <== mux
         spi.addr

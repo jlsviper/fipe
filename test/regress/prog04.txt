@@ -3,7 +3,7 @@ pins a8a
 skew 70a0f
 seed 721502
 pins_b 704
-entry_b 13
+entry_b 32
 mon 0 77ee6561 30881274 2
 mon 1 47544411 1591a1c6 3
 mon 2 72126602 3425d7c6 7
@@ -30,9 +30,28 @@ word 3480
 word 3480
 word 400c
 word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 5504
 word 0000
 word 1160
 word 5112
 word 10d9
-word 4013
+word 4026

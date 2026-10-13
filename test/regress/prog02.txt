@@ -3,7 +3,7 @@ pins 631
 skew b070c
 seed 369802
 pins_b a8e
-entry_b 23
+entry_b 32
 mon 0 81544b20 25c01d8d 4
 mon 1 de7fbe21 3d8fe639 2
 mon 2 282dccb 35102b65 7
@@ -39,13 +39,22 @@ word 5508
 word 5019
 word 5115
 word 4016
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 1725
 word 3280
 word 11cf
 word 5500
 word 550c
 word 0000
-word 431a
+word 4323
 word 16f9
 word 130e
 word 2034
@@ -60,4 +69,4 @@ word 109e
 word 5103
 word 123c
 word 0000
-word 402c
+word 4035

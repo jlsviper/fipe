@@ -3,7 +3,7 @@ pins 344
 skew c010b
 seed 750415
 pins_b 9ce
-entry_b 22
+entry_b 32
 mon 0 27aea6f7 2478d077 2
 mon 1 430f964c 325fd59 5
 mon 2 1999f77a 265b891f 2
@@ -38,16 +38,26 @@ word 5700
 word 105b
 word 3280
 word 4015
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 1377
 word 1087
 word 5104
 word 14ad
-word 4417
+word 4421
 word 3000
 word 146b
 word 0000
 word 102e
-word 421e
+word 4228
 word 3480
 word 5105
 word 5111
@@ -55,8 +65,8 @@ word 16c7
 word 14d8
 word 135a
 word 7400
-word 4224
-word 401f
+word 422e
+word 4029
 word 5109
 word 1206
-word 402b
+word 4035

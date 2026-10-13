@@ -81,6 +81,7 @@ type t =
   ; mutable shadow_clk : int
   ; mutable running : bool
   ; mutable halted : bool
+  ; mutable trapped : bool (* halted on a reserved instruction, as the chip *)
   ; mutable flag : bool
   ; mutable wcnt : int
   ; mutable far : bool
@@ -99,6 +100,7 @@ type t =
   ; fires : fire Queue.t
   ; samples : (int * int) Queue.t (* cycle, bit *)
   ; mutable b : t option (* sequencer B, sharing time, memory and pins *)
+  ; upper_half : bool (* B: fetches only words 32..63, as the hardware does *)
   ; mutable conflict : bool (* A and B changed one pin in one cycle *)
   }
 
@@ -110,19 +112,20 @@ let sext8 v =
 (* The start cycle (cycle 0): registers as the RTL leaves them at its end.
    [pins] is the bus level before start, which the synchronizer holds. *)
 let rec create ?(cfg = default_config) ?(pins = 0xFF) ?(entry = 0) ?b ~fifo program =
-  let m = create_lane ~cfg ~pins ~entry ~fifo program in
+  let m = create_lane ~upper_half:false ~cfg ~pins ~entry ~fifo program in
   (* B shares the skew registers (one SKEW register on the chip) *)
   m.b
   <- Option.map b ~f:(fun ((bcfg : config), bentry, bfifo) ->
        create_lane
+         ~upper_half:true
          ~cfg:{ bcfg with k1 = cfg.k1; k2 = cfg.k2; k3 = cfg.k3 }
          ~pins
-         ~entry:bentry
+         ~entry:(bentry lor 32)
          ~fifo:bfifo
          program);
   m
 
-and create_lane ~cfg ~pins ~entry ~fifo program =
+and create_lane ~upper_half ~cfg ~pins ~entry ~fifo program =
   { program
   ; cfg
   ; now = 1
@@ -139,6 +142,7 @@ and create_lane ~cfg ~pins ~entry ~fifo program =
   ; shadow_clk = release
   ; running = true
   ; halted = false
+  ; trapped = false
   ; flag = false
   ; wcnt = 0
   ; far = false
@@ -154,6 +158,7 @@ and create_lane ~cfg ~pins ~entry ~fifo program =
   ; fires = Queue.create ()
   ; samples = Queue.create ()
   ; b = None
+  ; upper_half
   ; conflict = false
   }
 ;;
@@ -203,7 +208,8 @@ let lane_step m ~c ~synced =
   if m.running
   then (
     (* unwritten program memory reads as zero, which is NOP *)
-    let ins = if m.pc < Array.length m.program then m.program.(m.pc) else Isa.Nop in
+    let addr = if m.upper_half then 32 + (m.pc land 31) else m.pc in
+    let ins = if addr < Array.length m.program then m.program.(addr) else Isa.Nop in
     let pin_of_sel : Isa.Wait_pin.t -> int = function
       | In -> m.cfg.in_pin
       | Data -> m.cfg.data_pin
@@ -214,6 +220,11 @@ let lane_step m ~c ~synced =
       m.pc <- (match taken with Some a -> a | None -> m.pc + 1) land 63
     in
     match ins with
+    | ins when not (Isa.implemented ins) ->
+      (* reserved: the chip halts with TRAP set, before any side effect *)
+      m.running <- false;
+      m.halted <- true;
+      m.trapped <- true
     | Evt { dt; clk_pin; cls; act } ->
       if count_start < depth && not m.far
       then (

@@ -2,8 +2,9 @@
    queues, and the pin drivers. This is the unit the end-to-end tests drive.
 
    The sequencers share the timebase and the program memory (each has its own
-   read port and starts at its own entry address), so their events land on one
-   time axis: concurrency without interleaving. If both fire on the same pin in
+   read port and starts at its own entry address; B's port covers the upper 32
+   words, addresses 32..63), so their events land on one time axis:
+   concurrency without interleaving. If both fire on the same pin in
    the same cycle, A wins and CONFLICT is set (sticky until either starts).
    With B idle, the core behaves exactly as the single-sequencer core did.
 
@@ -56,6 +57,7 @@ module O = struct
     ; pins_oe : 'a [@bits n_pins]
     ; fifo_ready : 'a
     ; halted : 'a
+    ; trapped : 'a (* A halted on an illegal or reserved instruction *)
     ; queue_count : 'a [@bits Event_queue.count_bits]
     ; fire0_valid : 'a
     ; fire0_pin : 'a [@bits Event_queue.pin_bits]
@@ -77,6 +79,7 @@ module O = struct
     ; (* sequencer B *)
       fifo_b_ready : 'a
     ; halted_b : 'a
+    ; trapped_b : 'a
     ; queue_count_b : 'a [@bits Event_queue.count_bits]
     ; fire0_b_valid : 'a
     ; fire0_b_pin : 'a [@bits Event_queue.pin_bits]
@@ -102,7 +105,7 @@ end
 
 let create (i : _ I.t) : _ O.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
-  let t_now = reg_fb spec ~width:Event_queue.time_bits ~f:(fun t -> t +:. 1) in
+  let t_now = reg_fb spec ~width:Event_queue.time_bits ~f:(fun t -> t +:. 1) -- "timebase" in
   (* Program memory has no clear: the host loads a program before every start
      (state is lost when the design is deselected anyway), so clearing it would
      only cost a gate in front of each of its 1,024 flip-flops and a reset net
@@ -110,20 +113,23 @@ let create (i : _ I.t) : _ O.t =
   let imem_spec = Reg_spec.create ~clock:i.clock () in
   let imem =
     List.init imem_words ~f:(fun k ->
-      reg imem_spec ~enable:(i.imem_we &: (i.imem_addr ==:. k)) i.imem_data)
+      reg imem_spec ~enable:(i.imem_we &: (i.imem_addr ==:. k)) i.imem_data
+      -- Printf.sprintf "imem_%02d" k)
   in
   (* synchronized inputs, shared by samples, WAIT and JMP Pin *)
   let sync_spec = Reg_spec.create ~clock:i.clock () in
-  let synced = reg sync_spec (reg sync_spec i.pins_in) in (* no clear: see Host_spi *)
+  let synced = reg sync_spec (reg sync_spec i.pins_in -- "pins_sync1") -- "pins_sync" in
+  (* no clear: see Host_spi *)
   (* One sequencer and its queue. The sequencer computes its next fetch address
      from registers (its instruction register, IR_PC, X, Y) and its start
      strobe, never from the fetched word, so feeding the word back is not a
      loop. Each sequencer has its own read port on the shared memory. *)
-  let lane ~start ~entry ~fifo_valid ~fifo_data ~data ~clk ~inp ~aux =
+  let lane ~name ~upper_half ~start ~entry ~fifo_valid ~fifo_data ~data ~clk ~inp ~aux =
     let q_ready = wire 1 in
     let fetch_data = wire 16 in
     let seq =
       Sequencer.create
+        ~name:("seq_" ^ name)
         { clock = i.clock
         ; clear = i.clear
         ; start
@@ -143,9 +149,15 @@ let create (i : _ I.t) : _ O.t =
         ; pins_sync = synced
         }
     in
-    fetch_data <== mux seq.fetch_addr imem;
+    (* B reads only the upper 32 words: half the read multiplexer and half the
+       memory wiring of a full second port (the dual-sequencer layout was
+       routing-limited). A reads all 64 words. *)
+    (if upper_half
+     then fetch_data <== mux (select seq.fetch_addr 4 0) (List.drop imem 32)
+     else fetch_data <== mux seq.fetch_addr imem);
     let q =
       Event_queue.create
+        ~name:("queue_" ^ name)
         { clock = i.clock
         ; clear = i.clear |: start
         ; t_now
@@ -160,6 +172,8 @@ let create (i : _ I.t) : _ O.t =
   in
   let seq, q =
     lane
+      ~name:"a"
+      ~upper_half:false
       ~start:i.start
       ~entry:i.entry_a
       ~fifo_valid:i.fifo_valid
@@ -171,8 +185,10 @@ let create (i : _ I.t) : _ O.t =
   in
   let seq_b, q_b =
     lane
+      ~name:"b"
+      ~upper_half:true
       ~start:i.start_b
-      ~entry:i.entry_b
+      ~entry:(i.entry_b |: of_int ~width:6 32)
       ~fifo_valid:i.fifo_b_valid
       ~fifo_data:i.fifo_b_data
       ~data:i.cfg_b_data_pin
@@ -191,7 +207,8 @@ let create (i : _ I.t) : _ O.t =
   let pins =
     List.init n_pins ~f:(fun k ->
       let out = wire 1 and oe = wire 1 in
-      let out_q = reg spec out and oe_q = reg spec oe in
+      let out_q = reg spec out -- Printf.sprintf "pin%d_out" k
+      and oe_q = reg spec oe -- Printf.sprintf "pin%d_oe" k in
       let st = out_q, oe_q in
       let st = apply ~valid:q_b.fire0_valid ~pin:q_b.fire0_pin ~value:q_b.fire0_value k st in
       let st = apply ~valid:q_b.fire1_valid ~pin:q_b.fire1_pin ~value:q_b.fire1_value k st in
@@ -232,6 +249,7 @@ let create (i : _ I.t) : _ O.t =
   ; pins_oe = concat_lsb (List.map pins ~f:snd)
   ; fifo_ready = seq.fifo_ready
   ; halted = seq.halted
+  ; trapped = seq.trapped
   ; queue_count = q.count
   ; fire0_valid = q.fire0_valid
   ; fire0_pin = q.fire0_pin
@@ -252,6 +270,7 @@ let create (i : _ I.t) : _ O.t =
   ; dbg_y = seq.y
   ; fifo_b_ready = seq_b.fifo_ready
   ; halted_b = seq_b.halted
+  ; trapped_b = seq_b.trapped
   ; queue_count_b = q_b.count
   ; fire0_b_valid = q_b.fire0_valid
   ; fire0_b_pin = q_b.fire0_pin

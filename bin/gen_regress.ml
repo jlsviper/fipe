@@ -53,9 +53,9 @@ let () =
     (* both sequencers, each in its own region of the shared memory *)
     let len_a = 4 + Random.State.int rand 20 in
     let prog_a = gen ~len:len_a rand in
-    let entry_b = len_a + 1 in
+    let entry_b = 32 in (* B runs from the upper half of program memory *)
     let prog_b = gen ~base:entry_b ~len:(4 + Random.State.int rand 20) rand in
-    let prog = Array.append prog_a prog_b in
+    let prog = Array.concat [ prog_a; Array.create ~len:(entry_b - len_a - 1) Isa.Nop; prog_b ] in
     let data_pin = Random.State.int rand 8 in
     let clk_pin = (data_pin + 1 + Random.State.int rand 7) % 8 in
     let in_pin = Random.State.int rand 8 in

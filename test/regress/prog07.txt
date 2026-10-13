@@ -3,7 +3,7 @@ pins 6f8
 skew 9000a
 seed 550503
 pins_b 143
-entry_b 20
+entry_b 32
 mon 0 77b337f4 2f6fd0ca 1
 mon 1 56d43551 294cbc7b 2
 mon 2 820a2a1e 2e298e65 2
@@ -36,11 +36,23 @@ word 2044
 word 15d7
 word 1299
 word 4013
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 5025
-word 4314
+word 4320
 word 1091
-word 4215
-word 4414
+word 4221
+word 4420
 word 3080
 word 11b7
 word 3180
@@ -53,4 +65,4 @@ word 3000
 word 101b
 word 5500
 word 1760
-word 4025
+word 4031

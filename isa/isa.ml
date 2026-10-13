@@ -304,6 +304,18 @@ let encode t =
 
 (* Decoding is strict: unused bits must be zero, so [encode (decode w) = w] for
    every word that decodes. Any other word is an illegal instruction. *)
+(* Whether this chip revision executes an instruction. The ISA is ahead of the
+   hardware by design (a roadmap in code): these decode as legal but are
+   reserved, and the sequencer traps on them (halts, TRAP flag) rather than
+   silently doing nothing. The assembler refuses them unless asked. *)
+let implemented = function
+  | Mov _ | Push _ | Crc _ | Sync _ | Cap _ -> false
+  | Pull { block } -> block (* a non-blocking PULL is not built *)
+  | Set { dst = Pin_dir; _ } -> false
+  | Jmp { cond = Osr_empty | Isr_full | Cap_ready; _ } -> false
+  | Nop | Evt _ | Dly _ | Wait _ | Jmp _ | Set _ -> true
+;;
+
 let decode w =
   let open Field in
   let open Option.Let_syntax in

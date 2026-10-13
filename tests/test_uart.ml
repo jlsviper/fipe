@@ -335,7 +335,7 @@ let%expect_test "full-duplex UART: A transmits while B receives the echoes" =
     (Bits.to_bool !(o.core.halted) && Bits.to_bool !(o.core.halted_b))
     (Bits.to_bool !(o.core.conflict));
   [%expect {|
-    program 27 words; B starts at address 17
+    program 42 words; B starts at address 32
     sent 55 A3 0F; B received 55 A3 0F; stop bits ok true
     flags: A late false order false; B late false order false; conflict false; both halted true
     concurrency: B received the echo of byte 0 (cycles 4741..9081) while A transmitted byte 1 (cycles 4839..9179): 4242 cycles overlap, 9.8 of 10 bits

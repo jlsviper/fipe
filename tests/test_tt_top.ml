@@ -323,3 +323,87 @@ let%expect_test "open-drain rise time: two loads give pull-up R and bus C" =
     largest pull-up meeting t_r at 400 pF: 2951 ohm
     unpowered device on the bus: line never reached the threshold (clamped): FAIL |}]
 ;;
+
+(* A frame of [n] clocks carrying the first [n] bits of cmd and data. *)
+let raw_frame c ~cmd ~data ~n =
+  cs c true;
+  ticks c c.half;
+  for k = 0 to n - 1 do
+    let b = if k < 8 then (cmd lsr (7 - k)) land 1 else if k < 40 then (data lsr (39 - k)) land 1 else 0 in
+    mosi c (b = 1);
+    ticks c c.half;
+    sck c true;
+    ticks c c.half;
+    sck c false
+  done;
+  ticks c c.half;
+  cs c false;
+  ticks c c.half
+;;
+
+let%expect_test "FRAME flag: short and overlong host SPI frames are flagged" =
+  let c = make () in
+  let frame () = (read c 0x44 lsr 30) land 1 in
+  let pins () = read c 0x41 land 0xFFF in
+  write c 0x41 0x123;
+  printf "after reset and good frames:   FRAME %d, PINS 0x%03x\n" (frame ()) (pins ());
+  raw_frame c ~cmd:(0x80 lor 0x41) ~data:0x456 ~n:20;
+  printf "short write (20 clocks):       FRAME %d, PINS 0x%03x (write not performed)\n" (frame ()) (pins ());
+  write c 0x40 0b10000;
+  printf "after CTRL bit 4:              FRAME %d\n" (frame ());
+  raw_frame c ~cmd:(0x80 lor 0x41) ~data:0x456 ~n:48;
+  printf "overlong write (48 clocks):    FRAME %d, PINS 0x%03x\n" (frame ()) (pins ());
+  write c 0x40 0b10000;
+  for _ = 1 to 5 do
+    write c 0x41 0x0AB;
+    ignore (read c 0x41 : int)
+  done;
+  printf "cleared, then 10 good frames:  FRAME %d\n" (frame ());
+  [%expect {|
+    after reset and good frames:   FRAME 0, PINS 0x123
+    short write (20 clocks):       FRAME 1, PINS 0x123 (write not performed)
+    after CTRL bit 4:              FRAME 0
+    overlong write (48 clocks):    FRAME 1, PINS 0x456
+    cleared, then 10 good frames:  FRAME 0 |}]
+;;
+
+let%expect_test "TRAP: an illegal word halts the sequencer, the debug PC shows where" =
+  let c = make () in
+  (* 0: SET X 5; 1: NOP; 2: an illegal word (WAIT with pin role 7); 3: halt *)
+  let words = [ Isa.encode (Set { dst = X; imm = 5 }); 0x0000; 0x3E00; Isa.encode (Jmp { cond = Always; addr = 3 }) ] in
+  printf "word 0x3E00 decodes: %b\n" (Option.is_some (Isa.decode 0x3E00));
+  List.iteri words ~f:(fun a w -> write c a w);
+  write c 0x40 1;
+  ticks c 200;
+  let status = read c 0x44 and dbg = read c 0x60 in
+  printf
+    "halted %d, TRAP %d, debug PC %d, X %d\n"
+    (status land 1)
+    ((status lsr 7) land 1)
+    (dbg land 63)
+    (read c 0x63 land 0xFFFF);
+  write c 2 0x0000;
+  write c 0x40 1;
+  ticks c 200;
+  let status = read c 0x44 in
+  printf
+    "word 2 fixed (NOP), restarted: halted %d, TRAP %d, debug PC %d\n"
+    (status land 1)
+    ((status lsr 7) land 1)
+    (read c 0x60 land 63);
+  [%expect {|
+    word 0x3E00 decodes: false
+    halted 1, TRAP 1, debug PC 2, X 5
+    word 2 fixed (NOP), restarted: halted 1, TRAP 0, debug PC 3 |}]
+;;
+
+let%expect_test "docs/registers.md is generated from the register map and up to date" =
+  let committed = In_channel.read_all "../docs/registers.md" in
+  printf
+    "%s (%d registers)\n"
+    (if String.equal committed (Fipe_hw.Regmap.markdown ())
+     then "up to date"
+     else "STALE: run dune exec bin/gen_verilog.exe")
+    (List.length Fipe_hw.Regmap.table);
+  [%expect {| up to date (38 registers) |}]
+;;

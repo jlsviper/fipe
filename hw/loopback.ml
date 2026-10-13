@@ -34,7 +34,8 @@ let create (i : _ I.t) : _ O.t =
   let levels = ours &: ~:(i.ext_pull_low) in
   bus <== levels;
   let mon =
-    Monitors.create { i.mon with clock = i.core.clock; clear = i.core.clear; pins = levels }
+    Monitors.create
+      { i.mon with clock = i.core.clock; clear = i.core.clear; pins = levels; pins_oe = core.pins_oe }
   in
   { core; mon; levels }
 ;;

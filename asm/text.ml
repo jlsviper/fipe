@@ -5,6 +5,8 @@
    Syntax (case-insensitive; ';' or '#' starts a comment):
 
      .equ NAME, VALUE               named constant, usable wherever a number is
+     .org ADDRESS                   continue at ADDRESS, filling the gap with NOPs
+                                    (on its own line; sequencer B runs from 32..63)
      label:                         may share a line with an instruction
 
      nop
@@ -235,7 +237,9 @@ let parse_line line consts toks =
   | m -> fail line "unknown instruction %S" m
 ;;
 
-let assemble_with_labels_exn (src : string) : Isa.t array * (string * int) list =
+let assemble_with_labels_exn ?(allow_reserved = false) (src : string)
+  : Isa.t array * (string * int) list
+  =
   let consts = Hashtbl.create (module String) in
   let labels = Hashtbl.create (module String) in
   let items = Queue.create () in
@@ -273,7 +277,35 @@ let assemble_with_labels_exn (src : string) : Isa.t array * (string * int) list 
         match toks with
         | [ n; v ] -> Hashtbl.set consts ~key:n ~data:(number line consts v)
         | _ -> fail line ".equ NAME, VALUE")
-      else Queue.enqueue items (parse_line line consts toks m)));
+      else if String.equal m ".org"
+      then (
+        match toks with
+        | [ v ] ->
+          let target = in_range line "address" (number line consts v) ~lo:0 ~hi:63 in
+          if target < Queue.length items
+          then
+            fail line ".org %d: code already reaches address %d" target (Queue.length items);
+          while Queue.length items < target do
+            Queue.enqueue items (Done Nop)
+          done
+        | _ -> fail line ".org ADDRESS")
+      else (
+        let item = parse_line line consts toks m in
+        (* reserved instructions decode but this revision traps on them *)
+        let reserved =
+          match item with
+          | Done i -> not (Isa.implemented i)
+          | Jump (cond, _, _) -> not (Isa.implemented (Jmp { cond; addr = 0 }))
+          | Halt_here -> false
+        in
+        if reserved && not allow_reserved
+        then
+          fail
+            line
+            "'%s' is reserved: the ISA defines it but this chip revision does not implement it, and \
+             the sequencer would halt with TRAP (allow_reserved assembles it anyway)"
+            (String.concat ~sep:" " (m :: toks));
+        Queue.enqueue items item)));
   let n = Queue.length items in
   if n > 64 then raise (Asm_error (0, Printf.sprintf "program has %d instructions; the limit is 64" n));
   let program =
@@ -294,18 +326,18 @@ let assemble_with_labels_exn (src : string) : Isa.t array * (string * int) list 
   program, Hashtbl.to_alist labels |> List.sort ~compare:(fun (_, a) (_, b) -> Int.compare a b)
 ;;
 
-let assemble_exn src = fst (assemble_with_labels_exn src)
+let assemble_exn ?allow_reserved src = fst (assemble_with_labels_exn ?allow_reserved src)
 
-let assemble src =
-  match assemble_exn src with
+let assemble ?allow_reserved src =
+  match assemble_exn ?allow_reserved src with
   | p -> Ok p
   | exception Asm_error (line, msg) -> Error (Printf.sprintf "line %d: %s" line msg)
 ;;
 
 (* The program and its label addresses (for example, a second sequencer's
    entry point). *)
-let assemble_with_labels src =
-  match assemble_with_labels_exn src with
+let assemble_with_labels ?allow_reserved src =
+  match assemble_with_labels_exn ?allow_reserved src with
   | r -> Ok r
   | exception Asm_error (line, msg) -> Error (Printf.sprintf "line %d: %s" line msg)
 ;;

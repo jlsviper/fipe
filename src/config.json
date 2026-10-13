@@ -14,6 +14,10 @@
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
   "PL_TARGET_DENSITY_PCT": 50,
+
+  "//": "FIPE: run OpenROAD on all 4 cores of GitHub's runner. LibreLane 3.1.0.dev3 means to",
+  "//": "default to the machine's thread count when this is unset, but a bug passes the",
+  "//": "string 'None' instead (log: 'Invalid thread number specification: None').",
   "OPENROAD_THREADS": 4,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
@@ -34,9 +38,10 @@
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
-  "//": "FIPE: stronger antenna repair. One build left 2 nets with antenna violations;",
-  "//": "these allow more repair passes with a larger safety margin, in global and",
-  "//": "detailed routing. Names checked against LibreLane 3.1.0.dev3 (defaults 3 and 10%).",
+  "//": "FIPE: stronger antenna repair in detailed routing (one build left 2 nets with",
+  "//": "antenna violations). Global-routing repair is back at the defaults (3, 10%): extra",
+  "//": "passes there were costly once the second sequencer made routing congested.",
+  "//": "Names checked against LibreLane 3.1.0.dev3.",
   "GRT_ANTENNA_REPAIR_ITERS": 3,
   "GRT_ANTENNA_REPAIR_MARGIN": 10,
   "DRT_ANTENNA_REPAIR_ITERS": 6,

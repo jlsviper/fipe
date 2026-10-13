@@ -3,7 +3,7 @@ pins 502
 skew e0d0e
 seed 574892
 pins_b bc3
-entry_b 14
+entry_b 32
 mon 0 33e434a9 8423ae2 0
 mon 1 9a29cdbb 34cf1bf8 6
 mon 2 17c7dc74 386b2f8 7
@@ -30,16 +30,34 @@ word 13ae
 word 420d
 word 500d
 word 400d
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 160f
 word 5500
 word 1027
-word 4410
+word 4422
 word 153c
 word 13eb
 word 7400
-word 4018
+word 402a
 word 1147
 word 0000
 word 14e0
 word 3440
-word 401a
+word 402c

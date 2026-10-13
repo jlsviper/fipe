@@ -3,7 +3,7 @@ pins 80c
 skew 8030a
 seed 537273
 pins_b c0f
-entry_b 20
+entry_b 32
 mon 0 ac4453c2 3345d377 3
 mon 1 1e892755 28dc2871 0
 mon 2 e22a443 206aaac9 4
@@ -36,18 +36,30 @@ word 5109
 word 0000
 word 510b
 word 4013
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 511a
-word 4114
+word 4120
 word 0000
 word 511c
 word 112e
 word 3780
-word 4316
-word 4316
+word 4322
+word 4322
 word 1385
-word 4416
+word 4422
 word 5504
 word 3300
-word 421f
+word 422b
 word 3000
-word 4022
+word 402e

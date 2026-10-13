@@ -50,6 +50,12 @@ what the spec promises. Demonstrated in simulation for I2C (hidden parameters re
 population statistics with 6-sigma limits), SPI (frequency-by-mode shmoos, MISO data-valid
 windows), UART (a device's real bit period and sample point) and open-drain rise time.
 
+Device-side attribution sharpens this: a monitor trigger can count only edges made while FIPE's
+own driver was released, so it measures the device rather than the bus. Across a modeled
+population of EEPROMs, each part's acknowledge delay is recovered exactly, where an any-edge
+monitor reports FIPE's own timing instead. Per-slot prescalers extend monitor range from 1.3 ms
+to 5.4 s.
+
 **Design and verification.**
 
 - **Formal proofs, for all time** (`formal/`, run in CI): the event queue fires every event once,
@@ -69,6 +75,13 @@ windows), UART (a device's real bit period and sample point) and open-drain rise
 - **The real post-layout netlist** (every buffer, hold-fix cell and antenna diode) runs 20
   random programs with random pin roles, skews, monitor setups and input waveforms, and
   must reproduce the RTL's output record exactly; CI runs it on every GDS build.
+- **No silent instructions.** The ISA is defined ahead of the hardware (a roadmap in code), so
+  "legal" and "working" are kept distinct: of the 12,110 legal encodings, 10,842 execute and
+  1,268 are reserved. A reserved or illegal word halts its sequencer with the TRAP flag, and the
+  debug program counter shows where; the assembler refuses reserved instructions unless asked.
+  The hardware's check agrees with the ISA's decoder on all 65,536 words.
+- **Power-up state does not matter.** Every register powered up to random values (two seeds):
+  the gate-level regression reproduces the same golden record as from a clean start.
 - **Clock-domain crossing:** a netlist checker proves every asynchronous input passes a two-flop
   synchronizer, on the post-layout netlist as well (`tools/cdc_check.py`, in CI).
 - **A machine-checked timing spec** drives a symbolic checker and the on-chip monitors; the two
@@ -80,6 +93,11 @@ windows), UART (a device's real bit period and sample point) and open-drain rise
 
 - Everything is verified in simulation and formally; nothing has run on an FPGA or silicon yet.
 - Timing resolution is one 20 ns cycle; the sequencer generates SPI up to about 8 MHz.
+- Four monitor slots: an eight-rule I2C spec is monitored in two passes, under the same
+  conditions; reports state this.
+- Device-side attribution is exact for falling edges and for pins FIPE never drives; on an
+  open-drain line, a rising edge may also be the line recovering from FIPE's own release.
+- Sequencer B runs from the upper half of program memory (32 words).
 - Two sequencers share eight pins; if both change one pin in the same cycle, A wins and
   CONFLICT is flagged.
 - I/O pad timing for CMOS5L is uncharacterized (no silicon data exists yet for anyone).

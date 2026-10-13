@@ -3,7 +3,7 @@ pins 40a
 skew 30700
 seed 804270
 pins_b bca
-entry_b 18
+entry_b 32
 mon 0 566237ae fa0157f 6
 mon 1 a66df854 2200b75f 4
 mon 2 fea89361 260063ba 6
@@ -34,6 +34,20 @@ word 1661
 word 7400
 word 10c3
 word 4011
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 1562
 word 5500
 word 1398
@@ -43,4 +57,4 @@ word 13d9
 word 2026
 word 0000
 word 1506
-word 401b
+word 4029

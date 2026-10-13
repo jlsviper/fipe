@@ -89,6 +89,7 @@ module O = struct
     ; fifo_ready : 'a
     ; running : 'a
     ; halted : 'a
+    ; trapped : 'a (* halted on an illegal or reserved instruction *)
     ; lead_stall : 'a
     }
   [@@deriving sexp_of, hardcaml]
@@ -103,13 +104,63 @@ end
 
 let field (f : Isa.Field.f) instr = select instr (f.lo + f.width - 1) f.lo
 
-let create (i : _ I.t) : _ O.t =
+(* Exactly the 16-bit words that decode strictly (re-encoding gives the same
+   word) to an instruction this revision implements: the opcode's fields hold
+   valid values and every operand bit outside them is zero. Built from the
+   ISA's own field layout and [Isa.implemented], and checked against
+   [Isa.decode] on all 65,536 words (tests/test_isa.ml). *)
+let executable w =
+  let module F = Isa.Field in
+  let fld (fl : F.f) = select w (fl.lo + fl.width - 1) fl.lo in
+  let op_is o = fld F.op ==:. o in
+  let only (fields : F.f list) =
+    let used = List.fold fields ~init:0 ~f:(fun m fl -> m lor (((1 lsl fl.width) - 1) lsl fl.lo)) in
+    w &: of_int ~width:16 (0xFFF land lnot used) ==:. 0
+  in
+  let any_of (fl : F.f) ok =
+    List.init (1 lsl fl.width) ~f:Fn.id
+    |> List.filter ~f:ok
+    |> List.fold ~init:gnd ~f:(fun acc k -> acc |: (fld fl ==:. k))
+  in
+  let impl = Isa.implemented in
+  reduce
+    ~f:( |: )
+    [ op_is Isa.Opcode.nop &: only []
+    ; op_is Isa.Opcode.evt
+      &: any_of F.evt_act (fun k -> Option.is_some (Isa.Act.of_int k))
+      &: only [ F.evt_dt; F.evt_tgt; F.evt_cls; F.evt_act ]
+    ; op_is Isa.Opcode.dly &: only [ F.dly_dt ]
+    ; op_is Isa.Opcode.wait
+      &: any_of F.wait_pin (fun k -> Option.is_some (Isa.Wait_pin.of_int k))
+      &: any_of F.wait_tsel (fun k -> Option.is_some (Isa.Wait_timeout.of_int k))
+      &: only [ F.wait_pin; F.wait_pol; F.wait_tsel ]
+    ; op_is Isa.Opcode.jmp
+      &: any_of F.jmp_cond (fun k ->
+        match Isa.Cond.of_int k with
+        | Some cond -> impl (Jmp { cond; addr = 0 })
+        | None -> false)
+      &: only [ F.jmp_cond; F.jmp_addr ]
+    ; op_is Isa.Opcode.set
+      &: any_of F.set_dst (fun k ->
+        match Isa.Set_dst.of_int k with
+        | Some dst -> impl (Set { dst; imm = 0 })
+        | None -> false)
+      &: only [ F.set_dst; F.set_imm ]
+    ; op_is Isa.Opcode.pullpush
+      &: any_of F.pp_push (fun k -> impl (if k = 1 then Push { block = true } else Pull { block = true }))
+      &: any_of F.pp_block (fun k -> impl (Pull { block = k = 1 }))
+      &: only [ F.pp_push; F.pp_block ]
+    ]
+;;
+
+let create ?(name = "seq") (i : _ I.t) : _ O.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
   let open Always in
   let reg w = Variable.reg spec ~width:w in
   let pc = reg 6 (* IR_PC *)
   and ir = reg 16
   and far = reg 1
+  and cu = reg 1 (* registered "caught up": T >= S, computed a cycle ahead *)
   and s = reg time_bits
   and x = reg 16
   and y = reg 16
@@ -123,12 +174,24 @@ let create (i : _ I.t) : _ O.t =
   and shadow_clk = reg 2
   and running = reg 1
   and halted = reg 1
+  and trapped = reg 1 (* halted on an illegal or reserved word (at IR_PC) *)
   and flag = reg 1 (* last WAIT timed out *)
   and wcnt = reg 16 (* cycles spent watching in the current WAIT *) in
+  (* readable names in the generated Verilog *)
+  List.iter
+    [ "ir_pc", pc; "ir", ir; "far", far; "caught_up", cu; "sched_s", s; "x", x; "y", y
+    ; "osr", osr; "coder", coder; "prescale", prescale; "k1", k1; "k2", k2; "k3", k3
+    ; "shadow_data", shadow_data; "shadow_clk", shadow_clk; "running", running
+    ; "halted", halted; "trapped", trapped; "flag", flag; "wait_count", wcnt
+    ]
+    ~f:(fun (n, (v : Always.Variable.t)) -> ignore (Signal.( -- ) v.value (name ^ "_" ^ n) : Signal.t));
   let instr = ir.value in
   let f fld = field fld instr in
   let op = f Isa.Field.op in
-  let is code = op ==:. code in
+  (* Only words this revision executes match an opcode: an illegal or reserved
+     word matches nothing (no side effects) and traps below. *)
+  let exec_ok = executable instr in
+  let is code = exec_ok &: (op ==:. code) in
   (* prescale: shift left by 0, 2, 4 or 6 *)
   let scale v = mux prescale.value [ v; sll v 2; sll v 4; sll v 6 ] in
   let t24 v = uresize v time_bits in
@@ -139,7 +202,12 @@ let create (i : _ I.t) : _ O.t =
   in
   let lead_ok _ = ~:(far.value) in
   (* real time has caught up with the schedule: T >= S *)
-  let caught_up = msb lead_d |: (lead_d ==:. 0) in
+  (* Real time has caught up with the schedule (T >= S). Read from a register
+     computed one cycle ahead (see [cu_next]), so the stall decision never waits
+     on a 24-bit subtract and zero-detect: in the dual-sequencer layout, that
+     chain into the instruction register's load was the slow-corner critical
+     path. Value-for-value identical to comparing the current S and T. *)
+  let caught_up = cu.value in
   (* EVT *)
   let s_evt = s.value +: scale (t24 (f Isa.Field.evt_dt)) in
   let cls = f Isa.Field.evt_cls in
@@ -191,10 +259,11 @@ let create (i : _ I.t) : _ O.t =
   let pin_of_sel sel =
     mux
       sel
-      [ i.cfg_in_pin; i.cfg_data_pin; i.cfg_clk_pin; i.cfg_aux_pin; i.cfg_in_pin; i.cfg_in_pin; i.cfg_in_pin; i.cfg_in_pin ]
+      [ i.cfg_in_pin; i.cfg_data_pin; i.cfg_clk_pin; i.cfg_aux_pin ]
   in
   let level_of p = mux p (bits_lsb i.pins_sync) in
-  let pin_match = level_of (pin_of_sel (f Isa.Field.wait_pin)) ==: f Isa.Field.wait_pol in
+  (* four pin roles; an executing WAIT has a valid role (bit 2 is zero) *)
+  let pin_match = level_of (pin_of_sel (select (f Isa.Field.wait_pin) 1 0)) ==: f Isa.Field.wait_pol in
   let tsel = f Isa.Field.wait_tsel in
   let limit = mux tsel [ ones 16; x.value; y.value; ones 16 ] in
   let timed_out = (tsel <>:. Isa.Wait_timeout.to_int Forever) &: (wcnt.value >=: limit) in
@@ -215,7 +284,25 @@ let create (i : _ I.t) : _ O.t =
     |: (is_wait &: ~:wait_done)
     |: (is_jmp &: cond_is Pin &: ~:caught_up)
   in
-  let step = running.value &: ~:blocking &: ~:halt_now in
+  let trap_now = running.value &: ~:exec_ok in
+  let step = running.value &: ~:blocking &: ~:halt_now &: ~:trap_now in
+  (* Next cycle's caught_up, from the next S against the next T (T + 1). The
+     three comparisons depend only on registers; the cycle's choice of next S
+     selects one bit at the end. Start makes S = T + 64 (never caught up); a
+     completing WAIT makes S = T (always caught up next cycle). Reset clears
+     cu, which only matters once start reloads it. *)
+  let ahead s_next =
+    let d = s_next -: (i.t_now +:. 1) in
+    msb d |: (d ==:. 0)
+  in
+  let cu_next =
+    priority_select_with_default
+      ~default:(ahead s.value)
+      [ { With_valid.valid = step &: evt_go; value = ahead s_evt }
+      ; { valid = step &: dly_go; value = ahead s_dly }
+      ; { valid = step &: is_wait; value = vdd }
+      ]
+  in
   (* SET *)
   let dst = f Isa.Field.set_dst in
   let imm = f Isa.Field.set_imm in
@@ -225,9 +312,11 @@ let create (i : _ I.t) : _ O.t =
         i.start
         [ running <-- vdd
         ; halted <-- gnd
+        ; trapped <-- gnd
         ; pc <-- i.entry
         ; ir <-- i.fetch_data
         ; far <-- gnd
+        ; cu <-- gnd
         ; flag <-- gnd
         ; wcnt <--. 0
         ; s <-- i.t_now +:. start_lead
@@ -243,8 +332,10 @@ let create (i : _ I.t) : _ O.t =
         ; shadow_clk <--. Value.release
         ]
         [ far <-- far_next
+        ; cu <-- cu_next
         ; wcnt <-- mux2 watching (wcnt.value +:. 1) (zero 16)
         ; when_ (running.value &: halt_now) [ running <-- gnd; halted <-- vdd ]
+        ; when_ trap_now [ running <-- gnd; halted <-- vdd; trapped <-- vdd ]
         ; when_
             step
             [ pc <-- next_addr
@@ -293,6 +384,7 @@ let create (i : _ I.t) : _ O.t =
   ; fifo_ready = pull_go
   ; running = running.value
   ; halted = halted.value
+  ; trapped = trapped.value
   ; lead_stall =
       running.value
       &: ((is Isa.Opcode.evt &: ~:(lead_ok s_evt)) |: (is Isa.Opcode.dly &: ~:(lead_ok s_dly)))

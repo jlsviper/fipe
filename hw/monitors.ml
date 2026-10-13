@@ -12,6 +12,16 @@
    latency cancels out of every interval. The counter is set to 1 on START, so
    at STOP it holds exactly stop_cycle - start_cycle.
 
+   Device-side attribution: a trigger marked "device only" counts an edge only
+   if FIPE's own driver on that pin was released on both sides of the edge
+   (driver enables delayed to match the synchronizer). On an open-drain line a
+   falling edge with our driver released is the device's; a rising edge may
+   also be the line recovering, through the pull-up, from our own earlier
+   release. So attribution is exact for falling edges, and for pins FIPE never
+   drives (such as MISO).
+   Prescale: a slot's counter advances every 1, 16, 256 or 4096 cycles, so an
+   interval of up to 65535 ticks covers 1.3 ms, 21 ms, 335 ms or 5.4 s at
+   50 MHz, at a resolution of one tick.
    Re-arming: by default each new START restarts the measurement, which makes
    the slot report the tightest interval (right for min rules). With
    [keep_first], the first START wins (right for max rules).
@@ -39,6 +49,7 @@ module I = struct
     { clock : 'a
     ; clear : 'a
     ; pins : 'a [@bits n_pins]
+    ; pins_oe : 'a [@bits n_pins] (* FIPE's own drivers, for attribution *)
     ; mon_clear : 'a
     ; en : 'a list [@length n_slots]
     ; keep_first : 'a list [@length n_slots]
@@ -62,6 +73,10 @@ module I = struct
     ; min_cyc : 'a list [@length n_slots] [@bits cnt_bits]
     ; max_en : 'a list [@length n_slots]
     ; max_cyc : 'a list [@length n_slots] [@bits cnt_bits]
+    ; st_dev : 'a list [@length n_slots] (* START: device edges only *)
+    ; sp_dev : 'a list [@length n_slots]
+    ; ab_dev : 'a list [@length n_slots]
+    ; prescale : 'a list [@length n_slots] [@bits 2] (* tick every 1, 16, 256, 4096 *)
     }
   [@@deriving sexp_of, hardcaml]
 end
@@ -84,12 +99,24 @@ let create (i : _ I.t) : _ O.t =
   let sync1 = reg sync_spec i.pins in (* no clear: see Host_spi *)
   let cur = reg sync_spec sync1 in
   let prev = reg spec cur in
-  let trig ~pin ~edge ~qen ~qpin ~qlvl =
+  (* our driver enables, delayed like the pins: [cur] is the bus two cycles
+     ago and [prev] three, so an edge between them is ours unless the driver
+     was released at both of those times *)
+  let oe_d1 = reg spec i.pins_oe in
+  let oe_d2 = reg spec oe_d1 in
+  let oe_d3 = reg spec oe_d2 in
+  let trig ~pin ~edge ~qen ~qpin ~qlvl ~dev =
     let c = mux pin (bits_lsb cur) in
     let p = mux pin (bits_lsb prev) in
     let edge_ok = mux edge [ ~:p &: c; p &: ~:c; p ^: c; gnd ] in
     let q = mux qpin (bits_lsb prev) in
-    edge_ok &: (~:qen |: (q ==: qlvl))
+    let released = ~:(mux pin (bits_lsb oe_d2)) &: ~:(mux pin (bits_lsb oe_d3)) in
+    edge_ok &: (~:qen |: (q ==: qlvl)) &: (~:dev |: released)
+  in
+  (* shared prescaler: one free-running counter, ticks decoded per slot *)
+  let pre = reg_fb spec ~width:12 ~f:(fun q -> q +:. 1) in
+  let tick ps =
+    mux ps [ vdd; select pre 3 0 ==:. 15; select pre 7 0 ==:. 255; pre ==:. 4095 ]
   in
   let nth l k = List.nth_exn l k in
   let slots =
@@ -102,6 +129,12 @@ let create (i : _ I.t) : _ O.t =
       let min_seen = Variable.reg spec ~width:cnt_bits in
       let max_seen = Variable.reg spec ~width:cnt_bits in
       let count = Variable.reg spec ~width:8 in
+      List.iter
+        [ "armed", armed; "count_cycles", cnt; "sticky", sticky; "min_seen", min_seen
+        ; "max_seen", max_seen; "intervals", count
+        ]
+        ~f:(fun (n, (v : Always.Variable.t)) ->
+          ignore (Signal.( -- ) v.value (Printf.sprintf "mon%d_%s" k n) : Signal.t));
       let st =
         en
         &: trig
@@ -110,6 +143,7 @@ let create (i : _ I.t) : _ O.t =
              ~qen:(nth i.st_qen k)
              ~qpin:(nth i.st_qpin k)
              ~qlvl:(nth i.st_qlvl k)
+             ~dev:(nth i.st_dev k)
       in
       let sp =
         en
@@ -120,6 +154,7 @@ let create (i : _ I.t) : _ O.t =
              ~qen:(nth i.sp_qen k)
              ~qpin:(nth i.sp_qpin k)
              ~qlvl:(nth i.sp_qlvl k)
+             ~dev:(nth i.sp_dev k)
       in
       let ab =
         en
@@ -131,6 +166,7 @@ let create (i : _ I.t) : _ O.t =
              ~qen:(nth i.ab_qen k)
              ~qpin:(nth i.ab_qpin k)
              ~qlvl:(nth i.ab_qlvl k)
+             ~dev:(nth i.ab_dev k)
         &: ~:sp
       in
       let over_max = nth i.max_en k &: (cnt.value >: nth i.max_cyc k) in
@@ -163,7 +199,9 @@ let create (i : _ I.t) : _ O.t =
                 [ armed <-- vdd; cnt <--. 1 ]
                 [ armed <-- still_armed
                 ; when_
-                    (still_armed &: (cnt.value <>: ones cnt_bits))
+                    (still_armed
+                     &: tick (nth i.prescale k)
+                     &: (cnt.value <>: ones cnt_bits))
                     [ cnt <-- cnt.value +:. 1 ]
                 ]
             ]

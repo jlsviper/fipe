@@ -3,7 +3,7 @@ pins 37c
 skew e0b06
 seed 57572
 pins_b a87
-entry_b 16
+entry_b 32
 mon 0 67d1a05d 5aead8f 2
 mon 1 b1800e4b 3d4fcc6e 6
 mon 2 279e98c8 3ae10dbd 6
@@ -32,8 +32,24 @@ word 5009
 word 5006
 word 1755
 word 400f
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 2045
 word 10c4
-word 4414
+word 4424
 word 511b
-word 4014
+word 4024

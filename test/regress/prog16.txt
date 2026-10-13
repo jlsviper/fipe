@@ -3,7 +3,7 @@ pins 81c
 skew 60b05
 seed 290669
 pins_b 6c7
-entry_b 8
+entry_b 32
 mon 0 958de401 263157ef 0
 mon 1 ed225f2 2eb19fdf 0
 mon 2 9fc9ce6a 215518da 3
@@ -24,13 +24,37 @@ word 2030
 word 13f2
 word 102e
 word 4007
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 7400
 word 1355
 word 0000
 word 5007
 word 3480
 word 5500
-word 440c
+word 4424
 word 550c
 word 501a
 word 1156
@@ -41,4 +65,4 @@ word 3500
 word 0000
 word 5023
 word 13f5
-word 4019
+word 4031

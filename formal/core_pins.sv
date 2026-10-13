@@ -31,6 +31,7 @@ module core_pins (
   wire [15:0] dbg_x, dbg_y;
   wire fifo_b_ready, halted_b, fire0_b_valid, fire1_b_valid, sample_valid_b, sample_bit_b;
   wire late_b, order_err_b, window_err_b, dbg_b_running, dbg_b_flag, conflict;
+  wire trapped, trapped_b;
   wire [2:0] queue_count_b, fire0_b_pin, fire1_b_pin;
   wire [1:0] fire0_b_value, fire1_b_value;
   wire [5:0] dbg_b_pc;

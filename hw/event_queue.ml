@@ -72,7 +72,7 @@ module Obs = struct
   [@@deriving sexp_of, hardcaml]
 end
 
-let create_observed (i : _ I.t) : _ O.t * _ Obs.t =
+let create_observed ?(name = "queue") (i : _ I.t) : _ O.t * _ Obs.t =
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
   let open Always in
   let entries = Array.init depth ~f:(fun _ -> Variable.reg spec ~width:entry_bits) in
@@ -81,6 +81,14 @@ let create_observed (i : _ I.t) : _ O.t * _ Obs.t =
   let count = Variable.reg spec ~width:count_bits in
   let last_due = Variable.reg spec ~width:time_bits in
   let last_valid = Variable.reg spec ~width:1 in
+  (* readable names in the generated Verilog *)
+  let ( -- ) (v : Always.Variable.t) n = ignore (Signal.( -- ) v.value (name ^ "_" ^ n) : Signal.t) in
+  Array.iteri entries ~f:(fun k e -> e -- Printf.sprintf "entry%d" k);
+  rp -- "read_ptr";
+  wp -- "write_ptr";
+  count -- "count";
+  last_due -- "last_due";
+  last_valid -- "last_valid";
   let entry_at idx = mux idx (Array.to_list entries |> List.map ~f:(fun v -> v.value)) in
   let e0 = entry_at rp.value in
   let e1 = entry_at (rp.value +:. 1) in
@@ -133,7 +141,7 @@ let create_observed (i : _ I.t) : _ O.t * _ Obs.t =
     } )
 ;;
 
-let create i = fst (create_observed i)
+let create ?name i = fst (create_observed ?name i)
 
 (* The queue with its internal state on extra outputs, for the formal proof. *)
 module O_formal = struct

@@ -29,6 +29,27 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**Batch A (chip change: needs a GDS run).** Timing: the slow-corner path (timebase, schedule
+compare, instruction-register load) is cut by computing the "caught up" flag a cycle ahead, with
+every cycle-exact test unchanged. Routing: sequencer B fetches from the upper half of program
+memory (addresses 32-63), halving its read port; `.org` places code there. Monitors: device-side
+attribution, per-slot prescalers (1.3 ms to 5.4 s range), and 96 fewer configuration flip-flops;
+directed tests cover same-cycle START/STOP, STOP versus ABORT, and timeout versus re-arm.
+Robustness: reserved and illegal instructions trap (STATUS bit 7) instead of silently doing
+nothing, and the assembler refuses reserved ones; a FRAME flag (STATUS bit 30) catches host SPI
+frames that are not 40 clocks. The register map is one table (`hw/regmap.ml`, generating
+`docs/registers.md`); registers in the generated Verilog carry readable names; and the
+gate-level regression passes from random power-up states. Layout: OpenROAD now runs on 4 threads
+(`OPENROAD_THREADS`, working around a LibreLane default bug).
+
+**Design decision: flip-flop program memory.** The 64 x 16 program memory is built from flip-flops,
+on purpose. CMOS5L is a new process with no silicon results yet: an SRAM macro there would be
+unproven, and latches complicate timing and hold analysis on an uncharacterized process.
+Flip-flops keep every check straightforward (the formal proofs, the RTL-to-gate equivalence and
+the gate-level regression all apply unchanged), and area is not the constraint: the whole design
+uses about 40% of the 6x4 tiles. An SRAM macro becomes the right choice for deep receive buffers
+or programs beyond 256 words.
+
 **Two sequencers (chip change: needs a GDS run).** A second sequencer shares the time base and
 program memory (each starts at its own entry address), so concurrent programs land on one time
 axis: concurrency without interleaving. Same-cycle pin conflicts resolve to A and set CONFLICT.

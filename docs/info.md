@@ -19,6 +19,10 @@ Two sequencers share the time base and the program memory, so concurrent program
 full-duplex UART: one transmits while the other receives) stay on one time axis; if both change
 one pin in the same cycle, sequencer A wins and the CONFLICT flag is set.
 
+The full register map is in `docs/registers.md` (generated from `hw/regmap.ml`). A sequencer
+that meets an illegal or reserved instruction halts with TRAP (STATUS bit 7); the debug register
+shows the address.
+
 Programs are written in FIPE assembly (`examples/*.s`, assembled by `fasm`). Example programs:
 I2C (EEPROM write with ACK polling), SPI (READ ID, with normal and late sampling), UART (echo,
 115200 baud), open-drain rise time, and three protocols the chip was not designed for: WS2812
@@ -37,7 +41,8 @@ To run a program:
 3. Set PINS (0x41): data pin [2:0], clock pin [5:3], input pin [8:6], auxiliary pin [11:9].
 4. Push any data the program pulls into the FIFO (0x43), then write 1 to CTRL (0x40).
    For sequencer B: its pins at 0x64, its start address in ENTRY (0x47, bits 13..8, from
-   `fasm labels`), its FIFO at 0x66; CTRL bit 3 starts it (bits 0 and 3 together start both
+   `fasm labels`; B runs from the upper half of program memory, 32-63, placed with `.org 32`),
+   its FIFO at 0x66; CTRL bit 3 starts it (bits 0 and 3 together start both
    in the same cycle). B's status is at 0x65 and its samples at 0x67.
 5. Poll STATUS (0x44) until halted; read sampled bits from SAMPLES (0x45).
 

@@ -2,7 +2,8 @@
 ; same time, on one shared time base. A single sequencer can only alternate.
 ;
 ; Run A from address 0 and B from the label rx (ENTRY register), started in
-; the same cycle (CTRL bits 0 and 3 together).
+; the same cycle (CTRL bits 0 and 3 together). Sequencer B fetches from the
+; upper half of program memory, so its code starts at .org 32.
 ; Pins: A's data pin = TX (push-pull, idle high); B's input pin = RX. Give B's
 ; data and clock pins unused pin numbers: B only samples.
 ; Host FIFO A: one word per byte, bit-reversed into bits 31..24 (LSB first).
@@ -34,6 +35,7 @@ txbit:  dly   TX_BIT_M1
         halt
 
 ; ---- sequencer B: receive, concurrently -------------------------------------
+        .org  32
 rx:     set   y, BYTES_M1
 rxbyte: wait  in, low                  ; a start bit
         set   x, 7

@@ -8,6 +8,13 @@ TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
 PROJECT_SOURCES = tt_um_jlsviper_fipe.v
 
+# RANDOM_INIT=N: every register powers up to random values from seed N
+# (tools/random_init.py), to check the design does not depend on power-up state
+ifdef RANDOM_INIT
+PROJECT_SOURCES = ../build/random_init.v
+PLUSARGS += +seed=$(RANDOM_INIT)
+endif
+
 ifneq ($(GATES),yes)
 
 # RTL simulation:

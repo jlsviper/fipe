@@ -3,7 +3,7 @@ pins 262
 skew a0707
 seed 639375
 pins_b 883
-entry_b 11
+entry_b 32
 mon 0 1aeb4e73 2679b2d4 5
 mon 1 45dcd413 3d46d2e 4
 mon 2 acff223a 86b9236 2
@@ -28,15 +28,36 @@ word 511d
 word 0000
 word 400a
 word 0000
-word 440b
-word 4017
 word 0000
-word 4413
-word 4017
-word 400e
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 4420
+word 402c
+word 0000
+word 4428
+word 402c
+word 4023
 word 0000
 word 511d
 word 0000
 word 1653
 word 7400
-word 4017
+word 402c

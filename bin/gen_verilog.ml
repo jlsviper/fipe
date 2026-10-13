@@ -14,6 +14,8 @@ let write path circuit =
 
 let () =
   write ("src/" ^ Fipe_hw.Tt_top.name ^ ".v") (Fipe_hw.Tt_top.circuit ());
+  (* the register map, generated from the same table the top level decodes *)
+  Stdio.Out_channel.write_all "docs/registers.md" ~data:(Fipe_hw.Regmap.markdown ());
   if Array.exists (Sys.get_argv ()) ~f:(String.equal "--components")
   then (
     ignore (Stdlib.Sys.command "mkdir -p build" : int);

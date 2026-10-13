@@ -3,7 +3,7 @@ pins e3a
 skew a0b
 seed 992365
 pins_b f86
-entry_b 10
+entry_b 32
 mon 0 3158e0f7 19181443 3
 mon 1 88fe97d4 25f3cf66 7
 mon 2 6eb2ba27 2f955ca2 1
@@ -26,13 +26,35 @@ word 0000
 word 3740
 word 13fe
 word 4009
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 12d9
 word 5701
-word 4312
+word 4328
 word 1598
-word 430b
+word 4321
 word 2046
 word 5014
 word 0000
 word 550c
-word 4013
+word 4029

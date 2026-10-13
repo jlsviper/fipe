@@ -3,7 +3,7 @@ pins 6ef
 skew 40703
 seed 713816
 pins_b c0f
-entry_b 18
+entry_b 32
 mon 0 21f5eb52 18648dfc 4
 mon 1 1d0159a6 cf69bc1 1
 mon 2 c7297dc c65ed9c 6
@@ -35,6 +35,20 @@ word 1139
 word 13fb
 word 4011
 word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
+word 0000
 word 1443
 word 0000
 word 10ef
@@ -44,13 +58,13 @@ word 1559
 word 5007
 word 3640
 word 16a9
-word 4412
+word 4420
 word 11b2
 word 5121
-word 4116
+word 4124
 word 5508
 word 14aa
-word 411a
+word 4128
 word 510b
-word 4325
-word 4025
+word 4333
+word 4033

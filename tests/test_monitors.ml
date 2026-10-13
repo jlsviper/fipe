@@ -257,3 +257,206 @@ let%expect_test "measured datasheet of our own I2C output at K = 0" =
     t_SU_STO    4000 ns    220 cyc    220 cyc   +400 ns  1
     t_BUF       4700 ns          -          -         -  0 (never triggered; predicted 0) |}]
 ;;
+
+(* ---- device-side attribution, prescale, corner cases ------------------------ *)
+
+module E = Fipe_model.I2c_eeprom
+module Monitors_edge = M.Edge
+
+(* Slot 0 only, set directly: [start] and [stop] are (pin, edge, qualifier
+   option); [dev] marks the stop trigger "device edges only". *)
+let set_slot0 (m : Bits.t ref M.I.t) ~start ~stop ~dev ~prescale =
+  let n l = List.nth_exn l 0 in
+  for k = 1 to M.n_slots - 1 do
+    setb (List.nth_exn m.en k) false
+  done;
+  let put (pin, edge, q) rp re rqen rqp rql =
+    set (n rp) 3 pin;
+    set (n re) 2 edge;
+    match q with
+    | None -> setb (n rqen) false
+    | Some (qp, ql) ->
+      setb (n rqen) true;
+      set (n rqp) 3 qp;
+      setb (n rql) ql
+  in
+  setb (n m.en) true;
+  put start m.st_pin m.st_edge m.st_qen m.st_qpin m.st_qlvl;
+  put stop m.sp_pin m.sp_edge m.sp_qen m.sp_qpin m.sp_qlvl;
+  setb (n m.ab_en) false;
+  setb (n m.keep_first) false;
+  setb (n m.min_en) false;
+  setb (n m.max_en) false;
+  setb (n m.sp_dev) dev;
+  set (n m.prescale) 2 prescale
+;;
+
+(* An I2C write of three bytes to the EEPROM model on the loopback bus; returns
+   slot 0's (min_seen, max_seen, count). *)
+let with_eeprom ?(params = E.default) ~start ~stop ~dev ~prescale () =
+  let sim = Lsim.create L.create in
+  let i : _ L.I.t = Cyclesim.inputs sim in
+  let o : _ L.O.t = Cyclesim.outputs ~clock_edge:Before sim in
+  let dev_m = E.create params in
+  set_slot0 i.mon ~start ~stop ~dev ~prescale;
+  i.core.clear := Bits.vdd;
+  Cyclesim.cycle sim;
+  i.core.clear := Bits.gnd;
+  Array.iteri i2c_program ~f:(fun a ins ->
+    i.core.imem_we := Bits.vdd;
+    set i.core.imem_addr 6 a;
+    set i.core.imem_data 16 (Isa.encode ins);
+    Cyclesim.cycle sim);
+  i.core.imem_we := Bits.gnd;
+  set i.core.cfg_data_pin 3 0;
+  set i.core.cfg_clk_pin 3 1;
+  i.mon.mon_clear := Bits.vdd;
+  Cyclesim.cycle sim;
+  i.mon.mon_clear := Bits.gnd;
+  i.core.start := Bits.vdd;
+  Cyclesim.cycle sim;
+  i.core.start := Bits.gnd;
+  let fifo = ref i2c_fifo and finished = ref 0 and cycles = ref 0 in
+  while !finished < 10 && !cycles < 80_000 do
+    (match !fifo with
+     | w :: _ ->
+       i.core.fifo_valid := Bits.vdd;
+       set i.core.fifo_data 32 w
+     | [] -> i.core.fifo_valid := Bits.gnd);
+    Cyclesim.cycle sim;
+    Int.incr cycles;
+    let lv = Bits.to_int !(o.levels) in
+    let pull = E.step dev_m ~scl:(lv land 2 <> 0) ~sda:(lv land 1 <> 0) in
+    set i.ext_pull_low 8 (if pull then 1 else 0);
+    if Bits.to_bool !(o.core.fifo_ready) then fifo := List.tl_exn !fifo;
+    if Bits.to_bool !(o.core.halted) && Bits.to_int !(o.core.queue_count) = 0
+    then Int.incr finished
+  done;
+  Cyclesim.cycle sim;
+  let g l = Bits.to_int !(List.nth_exn l 0) in
+  g o.mon.min_seen, g o.mon.max_seen, g o.mon.count
+;;
+
+let%expect_test "device-side attribution: the EEPROM's own ACK delay, across a population" =
+  (* START: SCL falls. STOP: SDA falls. Re-arming on every SCL fall makes the
+     slot report the interval from the latest SCL fall to the next SDA fall. *)
+  let start = 1, Monitors_edge.fall, None and stop = 0, Monitors_edge.fall, None in
+  printf "t_vd_ack   device-only stop (min..max, count)   any-edge stop (min..max)\n";
+  List.iter [ 25; 35; 45; 55 ] ~f:(fun t_vd_ack ->
+    let params = { E.default with t_vd_ack } in
+    let dmin, dmax, dn = with_eeprom ~params ~start ~stop ~dev:true ~prescale:0 () in
+    let amin, amax, _ = with_eeprom ~params ~start ~stop ~dev:false ~prescale:0 () in
+    printf
+      "%5d      %4d..%-4d (%d), minus t_vd_ack = %d      %4d..%-4d\n"
+      t_vd_ack
+      dmin
+      dmax
+      dn
+      (dmin - t_vd_ack)
+      amin
+      amax);
+  [%expect {|
+    t_vd_ack   device-only stop (min..max, count)   any-edge stop (min..max)
+       25        41..41   (3), minus t_vd_ack = 16        40..41
+       35        51..51   (3), minus t_vd_ack = 16        40..51
+       45        61..61   (3), minus t_vd_ack = 16        40..61
+       55        71..71   (3), minus t_vd_ack = 16        40..71 |}]
+;;
+
+let%expect_test "prescale: one transaction timed at x1, x16 and x256" =
+  (* START condition (SDA falls while SCL high) to STOP condition (SDA rises
+     while SCL high) *)
+  let start = 0, Monitors_edge.fall, Some (1, true) in
+  let stop = 0, Monitors_edge.rise, Some (1, true) in
+  List.iter [ 0, 1; 1, 16; 2, 256 ] ~f:(fun (ps, factor) ->
+    let mn, _, n = with_eeprom ~start ~stop ~dev:false ~prescale:ps () in
+    (* the counter starts at 1: at x1 it holds the interval exactly; with a
+       prescaler the interval is (ticks - 1) * P, within one tick *)
+    if factor = 1
+    then printf "x1    %6d ticks: exactly %d cycles (count %d)\n" mn mn n
+    else
+      printf
+        "x%-4d %6d ticks: (ticks - 1) x %d = %d cycles, within +/-%d (count %d)\n"
+        factor
+        mn
+        factor
+        ((mn - 1) * factor)
+        factor
+        n);
+  [%expect {|
+    x1     13324 ticks: exactly 13324 cycles (count 1)
+    x16      834 ticks: (ticks - 1) x 16 = 13328 cycles, within +/-16 (count 1)
+    x256      53 ticks: (ticks - 1) x 256 = 13312 cycles, within +/-256 (count 1) |}]
+;;
+
+(* Standalone monitor, driven cycle by cycle: [wave] gives pins 0..2 levels per
+   cycle. Returns the cycles with a violation and the slot's final state. *)
+let corner ?(abort = false) ?max ?(keep_first = false) wave =
+  let sim = Msim.create M.create in
+  let m : _ M.I.t = Cyclesim.inputs sim in
+  let o : _ M.O.t = Cyclesim.outputs ~clock_edge:Before sim in
+  set_slot0 m ~start:(0, Monitors_edge.rise, None) ~stop:(1, Monitors_edge.rise, None) ~dev:false ~prescale:0;
+  let n l = List.nth_exn l 0 in
+  setb (n m.keep_first) keep_first;
+  setb (n m.ab_en) abort;
+  set (n m.ab_pin) 3 2;
+  set (n m.ab_edge) 2 Monitors_edge.rise;
+  setb (n m.ab_qen) false;
+  (match max with
+   | Some v ->
+     setb (n m.max_en) true;
+     set (n m.max_cyc) 16 v
+   | None -> ());
+  m.clear := Bits.vdd;
+  Cyclesim.cycle sim;
+  m.clear := Bits.gnd;
+  m.mon_clear := Bits.vdd;
+  Cyclesim.cycle sim;
+  m.mon_clear := Bits.gnd;
+  let viols = Queue.create () in
+  Array.iteri wave ~f:(fun c p ->
+    set m.pins 8 p;
+    Cyclesim.cycle sim;
+    if Bits.to_bool !(n o.viol) then Queue.enqueue viols c);
+  for _ = 1 to 4 do
+    Cyclesim.cycle sim
+  done;
+  let g l = Bits.to_int !(n l) in
+  printf
+    "violations at %s; measured %d (min %d, max %d); armed %b\n"
+    (if Queue.is_empty viols then "none" else String.concat ~sep:"," (List.map (Queue.to_list viols) ~f:Int.to_string))
+    (g o.count)
+    (g o.min_seen)
+    (g o.max_seen)
+    (g o.armed = 1)
+;;
+
+(* levels: bit 0 START pin, bit 1 STOP pin, bit 2 ABORT pin; rising edges *)
+let wave_of steps len =
+  Array.init len ~f:(fun c ->
+    List.fold steps ~init:0 ~f:(fun acc (at, bits) -> if c >= at then acc lxor bits else acc))
+;;
+
+let%expect_test "monitor corner cases" =
+  print_string "START and STOP in one cycle, slot idle: only arms.             ";
+  corner (wave_of [ 5, 0b011 ] 30);
+  print_string "...then both again 15 cycles later: measures 15 and re-arms.   ";
+  corner (wave_of [ 5, 0b011; 10, 0b011; 20, 0b011 ] 40);
+  print_string "STOP and ABORT in one cycle: STOP wins (measured 7).            ";
+  corner ~abort:true (wave_of [ 5, 0b001; 12, 0b110 ] 30);
+  print_string "ABORT alone: nothing measured, disarmed.                        ";
+  corner ~abort:true (wave_of [ 5, 0b001; 12, 0b100 ] 30);
+  print_string "timeout (max 10) with no new START: flagged once, disarmed.     ";
+  corner ~max:10 (wave_of [ 5, 0b001 ] 40);
+  (* edges are seen two cycles after they happen, so a START rising at cycle
+     16 lands on the cycle-18 timeout *)
+  print_string "timeout and a new START in one cycle: flags, and re-arms.       ";
+  corner ~max:10 (wave_of [ 5, 0b001; 10, 0b001; 16, 0b001 ] 25);
+  [%expect {|
+    START and STOP in one cycle, slot idle: only arms.             violations at none; measured 0 (min 65535, max 0); armed true
+    ...then both again 15 cycles later: measures 15 and re-arms.   violations at none; measured 1 (min 15, max 15); armed true
+    STOP and ABORT in one cycle: STOP wins (measured 7).            violations at none; measured 1 (min 7, max 7); armed false
+    ABORT alone: nothing measured, disarmed.                        violations at none; measured 0 (min 65535, max 0); armed false
+    timeout (max 10) with no new START: flagged once, disarmed.     violations at 18; measured 1 (min 11, max 11); armed false
+    timeout and a new START in one cycle: flags, and re-arms.       violations at 18; measured 1 (min 11, max 11); armed true |}]
+;;

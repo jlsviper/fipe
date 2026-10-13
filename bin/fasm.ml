@@ -4,6 +4,7 @@
      dune exec bin/fasm.exe -- dis  PROGRAM.hex                  disassemble a hex image
      dune exec bin/fasm.exe -- list PROGRAM.s                    assemble, show the listing
      dune exec bin/fasm.exe -- labels PROGRAM.s                  label addresses (entry points)
+   Add --allow-reserved to assemble instructions this chip revision traps on.
 
    The hex image has one 16-bit instruction word per line, for the host
    loader (registers 0x00..0x3F over SPI). *)
@@ -14,9 +15,12 @@ module T = Fipe_asm.Text
 let read path = In_channel.read_all path
 
 let () =
-  match List.tl_exn (Array.to_list (Sys.get_argv ())) with
+  let argv = List.tl_exn (Array.to_list (Sys.get_argv ())) in
+  (* --allow-reserved: assemble instructions this chip revision traps on *)
+  let allow_reserved = List.mem argv "--allow-reserved" ~equal:String.equal in
+  match List.filter argv ~f:(fun a -> not (String.equal a "--allow-reserved")) with
   | [ "asm"; src ] | [ "asm"; src; "-o"; _ ] as args ->
-    (match T.assemble (read src) with
+    (match T.assemble ~allow_reserved (read src) with
      | Error e ->
        eprintf "%s: %s\n" src e;
        Stdlib.exit 1
@@ -29,13 +33,13 @@ let () =
         | _ -> print_string hex))
   | [ "dis"; hex ] -> print_string (T.disassemble (T.of_hex (read hex)))
   | [ "labels"; src ] ->
-    (match T.assemble_with_labels (read src) with
+    (match T.assemble_with_labels ~allow_reserved (read src) with
      | Error e ->
        eprintf "%s: %s\n" src e;
        Stdlib.exit 1
      | Ok (_, labels) -> List.iter labels ~f:(fun (l, a) -> printf "%-12s %d\n" l a))
   | [ "list"; src ] ->
-    (match T.assemble (read src) with
+    (match T.assemble ~allow_reserved (read src) with
      | Error e ->
        eprintf "%s: %s\n" src e;
        Stdlib.exit 1

@@ -29,6 +29,9 @@ def main():
 
     def is_flop(t): return t in ('$_DFF_P_', '$_DFF_N_') or re.search(r'_df\w*_\d', t)
     def is_wire(t): return t == '$_BUF_' or re.search(r'_(buf|dlygate|dlyb|clkbuf)\w*_\d', t)
+    # physical-only cells: antenna protection diodes, fill, decap and taps have
+    # no logic output, so a net touching them is not logic
+    def is_physical(t): return re.search(r'_(antenna|fill|decap|tap)\w*', t)
 
     # sinks: bit -> list of (cell, type, pin)
     sinks = defaultdict(list)
@@ -51,6 +54,8 @@ def main():
         seen = seen or set()
         out = []
         for cname, ctype, pin in sinks.get(bit, []):
+            if is_physical(ctype):
+                continue
             if is_wire(ctype):
                 for b in cells[cname]['connections'].get('X', cells[cname]['connections'].get('Y', [])):
                     if isinstance(b, int) and b not in seen:
