@@ -138,12 +138,20 @@ let create (i : _ I.t) : _ O.t =
   let wd = spi.wdata in
   let rw_reg a w = reg spec ~enable:(wr a) (select wd (w - 1) 0) in
   (* control strobes *)
+  (* CTRL strobes are registered: they act one cycle after the host's write.
+     Start selects the first fetch address, which drives the 64-way program
+     memory mux into the instruction register; decoding it straight from the
+     SPI block's write data put that whole chain in one cycle (every one of the
+     twelve worst slow-corner paths began at the start bit). All strobes move
+     together, so a write that clears the sample log and starts still does
+     both in the same cycle. *)
   let ctrl = wr Reg.ctrl in
-  let start = ctrl &: bit wd 0 in
-  let mon_clear = ctrl &: bit wd 1 in
-  let sample_clear = ctrl &: bit wd 2 in
-  let start_b = ctrl &: bit wd 3 in
-  frame_err_clear <== (ctrl &: bit wd 4);
+  let strobe k = reg spec (ctrl &: bit wd k) -- Printf.sprintf "ctrl_bit%d" k in
+  let start = strobe 0 in
+  let mon_clear = strobe 1 in
+  let sample_clear = strobe 2 in
+  let start_b = strobe 3 in
+  frame_err_clear <== strobe 4;
   let pins = rw_reg Reg.pins 12 in
   let pins_b = rw_reg Reg.pins_b 12 in
   let entry = rw_reg Reg.entry 14 in

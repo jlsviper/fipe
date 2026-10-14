@@ -220,7 +220,7 @@ let%expect_test "full chip: I2C write and poll against an EEPROM, all over the p
     sampled bits, oldest first: 0001 (expect 0001: three ACKs, then busy NACK)
     device wrote 0x5a at 0x00
     monitor violations: 0
-    debug: pc 38 running 0 halted 1 flag 0 queue 0; S 38018, T 41974, X 0, Y 0
+    debug: pc 38 running 0 halted 1 flag 0 queue 0; S 38019, T 41974, X 0, Y 0
       t_HD_STA  min 220 cyc  max 220 cyc  n 2
       t_LOW     min 248 cyc  max 248 cyc  n 38
       t_SU_DAT  min 192 cyc  max 208 cyc  n 22

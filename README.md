@@ -33,7 +33,10 @@ The architecture spec is the source of design intent; this repo implements it.
 register's load are cut, with every cycle-exact test unchanged. The "caught up" flag (timebase
 against schedule) is computed a cycle ahead; and the WAIT timeout compares its counter for
 equality with the limit instead of magnitude (the counter starts at 0 and steps by one while
-watching, so the two agree), replacing a 16-bit carry ripple with a shallow AND tree. Routing: sequencer B fetches from the upper half of program
+watching, so the two agree), replacing a 16-bit carry ripple with a shallow AND tree. And the
+CTRL strobes are registered (start acts one cycle after the host's write): every one of the
+twelve worst remaining paths ran from the SPI write data through the start decode, the fetch
+address and the 64-way program memory mux into the instruction register. Routing: sequencer B fetches from the upper half of program
 memory (addresses 32-63), halving its read port; `.org` places code there. Monitors: device-side
 attribution, per-slot prescalers (1.3 ms to 5.4 s range), and 96 fewer configuration flip-flops;
 directed tests cover same-cycle START/STOP, STOP versus ABORT, and timeout versus re-arm.
