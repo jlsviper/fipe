@@ -266,7 +266,13 @@ let create ?(name = "seq") (i : _ I.t) : _ O.t =
   let pin_match = level_of (pin_of_sel (select (f Isa.Field.wait_pin) 1 0)) ==: f Isa.Field.wait_pol in
   let tsel = f Isa.Field.wait_tsel in
   let limit = mux tsel [ ones 16; x.value; y.value; ones 16 ] in
-  let timed_out = (tsel <>:. Isa.Wait_timeout.to_int Forever) &: (wcnt.value >=: limit) in
+  (* While a WAIT watches, wcnt starts at 0 and steps by exactly 1 per cycle
+     (it is reset whenever the sequencer is not watching), and the limit
+     cannot change (X and Y only change by executing instructions). So
+     wcnt >= limit first holds exactly when wcnt = limit, and an equality
+     compare (a shallow AND tree) replaces a 16-bit carry ripple that was on
+     the slow-corner path into the instruction register's load. *)
+  let timed_out = (tsel <>:. Isa.Wait_timeout.to_int Forever) &: (wcnt.value ==: limit) in
   let wait_done = caught_up &: (pin_match |: timed_out) in
   let watching = running.value &: is_wait &: caught_up &: ~:wait_done in
   let in_high = level_of i.cfg_in_pin in

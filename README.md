@@ -29,9 +29,11 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
-**Batch A (chip change: needs a GDS run).** Timing: the slow-corner path (timebase, schedule
-compare, instruction-register load) is cut by computing the "caught up" flag a cycle ahead, with
-every cycle-exact test unchanged. Routing: sequencer B fetches from the upper half of program
+**Batch A (chip change: needs a GDS run).** Timing: two slow-corner paths into the instruction
+register's load are cut, with every cycle-exact test unchanged. The "caught up" flag (timebase
+against schedule) is computed a cycle ahead; and the WAIT timeout compares its counter for
+equality with the limit instead of magnitude (the counter starts at 0 and steps by one while
+watching, so the two agree), replacing a 16-bit carry ripple with a shallow AND tree. Routing: sequencer B fetches from the upper half of program
 memory (addresses 32-63), halving its read port; `.org` places code there. Monitors: device-side
 attribution, per-slot prescalers (1.3 ms to 5.4 s range), and 96 fewer configuration flip-flops;
 directed tests cover same-cycle START/STOP, STOP versus ABORT, and timeout versus re-arm.
