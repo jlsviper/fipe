@@ -24,9 +24,10 @@ that meets an illegal or reserved instruction halts with TRAP (STATUS bit 7); th
 shows the address.
 
 Programs are written in FIPE assembly (`examples/*.s`, assembled by `fasm`). Example programs:
-I2C (EEPROM write with ACK polling), SPI (READ ID, with normal and late sampling), UART (echo,
-115200 baud), open-drain rise time, and three protocols the chip was not designed for: WS2812
-LEDs, 1-Wire (READ ROM) and JTAG (IDCODE).
+I2C (EEPROM write with ACK polling; controller and target on one chip), SPI (READ ID, with
+normal and late sampling), UART (echo, 115200 baud; full duplex on two sequencers), open-drain
+rise time, and four protocols the chip was not designed for: WS2812 LEDs, 1-Wire (READ ROM),
+JTAG (IDCODE) and SWD (debug-port ID read, acknowledge decoded on-chip).
 
 ## How to test
 

@@ -29,6 +29,16 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**Batch B (firmware only: no chip change).** Controller and target on one chip: sequencer A is an
+I2C controller and sequencer B an I2C target on separate pins joined outside the chip, a real
+wired-AND bus (`examples/i2c_controller_target.s`); the target receives `A0 00 5A` and
+acknowledges each byte, identically on the RTL and the cycle-accurate simulator. With a
+programmable acknowledge delay, the target finds the controller's sampling point (ACK up to 348
+cycles, NACK from 349). SWD (`examples/swd_dpidr.s`, 57 words): line reset and a DPIDR read
+against an ARM SW-DP model, with the 3-bit acknowledge decoded by branching on the pin; OK,
+WAIT, FAULT and an absent port all land in their own result code, with no bus contention. The
+parity bit is checked by the host (there is no XOR instruction).
+
 **Batch A (chip change: needs a GDS run).** Timing: two slow-corner paths into the instruction
 register's load are cut, with every cycle-exact test unchanged. The "caught up" flag (timebase
 against schedule) is computed a cycle ahead; and the WAIT timeout compares its counter for

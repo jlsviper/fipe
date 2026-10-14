@@ -18,7 +18,7 @@ find the evidence in this repository. Gaps are listed as gaps.
 | Standard settings: I2C at 100 and 400 kHz | Partial | 100 kHz (standard mode) is implemented and characterized; 400 kHz (fast mode) is not yet demonstrated. |
 | Stretch: low-speed USB, 10 Mbit Ethernet | Not attempted | Deliberately out of scope; depth over breadth. |
 | Other protocols worth considering: JTAG, SWD, PS/2, CAN | Partial | JTAG demonstrated (IDCODE). 1-Wire and WS2812 also demonstrated. |
-| Running protocols concurrently; controller and target roles | Partial | Two sequencers on one shared time base: full-duplex UART demonstrated (`examples/uart_full_duplex.s`: B receives each echo while A transmits the next byte, 9.8 of 10 bits overlapping). A target role (the chip as an I2C EEPROM) is not yet demonstrated. |
+| Running protocols concurrently; controller and target roles | Met | Two sequencers on one shared time base. Full-duplex UART (`examples/uart_full_duplex.s`: B receives each echo while A transmits the next byte, 9.8 of 10 bits overlapping). Controller and target on one chip (`examples/i2c_controller_target.s`): A is an I2C controller on pins 0 and 1, B an I2C target on pins 2 and 3, joined outside the chip as a wired-AND bus; the target receives every byte and acknowledges. The target acknowledges every address (no compare instruction); the host checks the address byte. |
 | Use rst_n to reach a known state; reload after reselection | Met | `rst_n` passes a two-flop synchronizer; the host reloads programs (`docs/info.md`). |
 | Program loading through a documented host | Met | SPI host interface and register map (`hw/tt_top.ml`, `docs/info.md`); the demo board's RP2040 is the intended host. |
 
@@ -36,19 +36,26 @@ find the evidence in this repository. Gaps are listed as gaps.
 
 ## Judging
 
-**Flexibility.** Protocols are programs on one engine. Three protocols the chip was not designed
-for run from assembly alone, each verified. Because every protocol lowers to the same timed
+**Flexibility.** Protocols are programs on one engine. Four protocols the chip was not designed
+for (WS2812, 1-Wire, JTAG and SWD) run from assembly alone, each verified against a device
+model on the RTL; so does the target side of I2C. Because every protocol lowers to the same timed
 events, every protocol also inherits the same fault injection (skew classes) and measurement
 tools without protocol-specific hardware.
 
 **Protocols demonstrated.** UART (including full duplex on two sequencers), SPI (modes 0 to 3,
-with late sampling), I2C, WS2812, 1-Wire, JTAG.
+with late sampling), I2C (controller, and target on the second sequencer), WS2812, 1-Wire, JTAG,
+SWD (line reset and a debug-port ID read, with the acknowledge decoded on-chip by branching on
+the pin: OK, WAIT, FAULT and no answer each take their own path).
 
 **Something unique the architecture makes possible.** Measured datasheets: the chip moves chosen
 edges by exact amounts, watches the device, and reports what the device actually needs against
 what the spec promises. Demonstrated in simulation for I2C (hidden parameters recovered;
 population statistics with 6-sigma limits), SPI (frequency-by-mode shmoos, MISO data-valid
 windows), UART (a device's real bit period and sample point) and open-drain rise time.
+
+The target role turns the same idea around: FIPE playing an I2C target with a programmable
+acknowledge delay finds a controller's sampling point (here, our own controller's: ACKs up to 348
+cycles of delay, NACK from 349).
 
 Device-side attribution sharpens this: a monitor trigger can count only edges made while FIPE's
 own driver was released, so it measures the device rather than the bus. Across a modeled
