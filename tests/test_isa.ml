@@ -67,5 +67,5 @@ let%expect_test "hardware executable check = decode + implemented, all 65,536 wo
     !executable
     !reserved
     !illegal;
-  [%expect {| 65536 of 65536 words agree. 10842 execute, 1268 are legal but reserved (trap), 53426 are illegal (trap) |}]
+  [%expect {| 65536 of 65536 words agree. 10622 execute, 1488 are legal but reserved (trap), 53426 are illegal (trap) |}]
 ;;

@@ -75,6 +75,14 @@ type t =
   ; mutable y : int
   ; mutable osr : int
   ; mutable coder : int
+  ; mutable stuff_run : int
+  ; mutable stuff_last : bool
+  ; mutable crc : int
+  ; mutable crc_poly : int
+  ; mutable crc_wm1 : int
+  ; mutable crc_inv : bool
+  ; mutable crc_feed : bool
+  ; mutable crc_corrupt : bool
   ; mutable prescale : int
   ; mutable k : int array (* index 1..3 *)
   ; mutable shadow_data : int
@@ -136,6 +144,14 @@ and create_lane ~upper_half ~cfg ~pins ~entry ~fifo program =
   ; y = 0
   ; osr = 0
   ; coder = 0
+  ; stuff_run = 0
+  ; stuff_last = false
+  ; crc = 0
+  ; crc_poly = 0
+  ; crc_wm1 = 0
+  ; crc_inv = false
+  ; crc_feed = false
+  ; crc_corrupt = false
   ; prescale = 0
   ; k = [| 0; sext8 cfg.k1; sext8 cfg.k2; sext8 cfg.k3 |]
   ; shadow_data = release
@@ -172,6 +188,14 @@ let own_level m p = (not m.oe.(p)) || m.out.(p)
 (* One lane (a sequencer and its queue) for one cycle: fires from the queue's
    state at the start of the cycle, then the sequencer, then the queue accepts
    any new entry. Returns what fired, in order; pins are updated by [step]. *)
+(* The CRC unit: a serial LFSR of width wm1 + 1 over data bits, as the chip *)
+let crc_mask wm1 = (1 lsl (wm1 + 1)) - 1
+
+let crc_next m bit =
+  let top = (m.crc lsr m.crc_wm1) land 1 = 1 in
+  ((m.crc lsl 1) lxor if Bool.( <> ) top bit then m.crc_poly else 0) land crc_mask m.crc_wm1
+;;
+
 let lane_step m ~c ~synced =
   let pin_high p = (synced lsr p) land 1 = 1 in
   (* --- queue fires (state at start of cycle) --- *)
@@ -231,17 +255,42 @@ let lane_step m ~c ~synced =
         let open_drain = m.coder land 8 <> 0 and invert = m.coder land 4 <> 0 in
         let high = if open_drain then release else drive1 in
         let shadow = if clk_pin then m.shadow_clk else m.shadow_data in
+        (* bit stuffing (as the chip): a due stuff bit is sent by this same
+           Shift_out, which then executes again for the real bit *)
+        let stuffing = m.coder land 16 <> 0 and can_style = m.coder land 32 <> 0 in
+        let stuff_due =
+          stuffing && (if can_style then m.stuff_run = 5 else m.stuff_run = 6)
+        in
+        let data_bit = m.osr land (1 lsl 31) <> 0 in
+        (* a due stuff bit goes out before the next data-pin event of any kind *)
+        let data_pin_event =
+          (not clk_pin)
+          &&
+          match act with
+          | Shift_out | Drive0 | Drive1 | Release | Toggle -> true
+          | Sample | Aux0 | Aux1 -> false
+        in
+        let stuff_now = stuff_due && data_pin_event in
+        let stuff_bit = can_style && not m.stuff_last in
+        let tx_bit = if stuff_now then stuff_bit else data_bit in
+        let coded b =
+          let level =
+            if m.coder land 1 <> 0
+            then if b then shadow <> drive0 else shadow = drive0
+            else Bool.( <> ) b invert
+          in
+          if level then high else drive0
+        in
         let value =
           match act with
           | Drive0 | Aux0 -> drive0
           | Drive1 | Aux1 -> drive1
           | Release -> release
           | Toggle -> if shadow = drive0 then high else drive0
-          | Shift_out ->
-            let b = m.osr land (1 lsl 31) <> 0 in
-            if Bool.( <> ) b invert then high else drive0
+          | Shift_out -> coded data_bit
           | Sample -> sample
         in
+        let value = if stuff_now then coded stuff_bit else value in
         let pin =
           match act with
           | Sample -> m.cfg.in_pin
@@ -252,13 +301,28 @@ let lane_step m ~c ~synced =
         let due = (m.s + scale m (dt + m.k.(cls))) land tmask in
         enq := Some { due; pin; value };
         m.s <- s_evt;
-        (match act with
-         | Shift_out -> m.osr <- (m.osr lsl 1) land 0xFFFF_FFFF
-         | _ -> ());
+        let is_shift =
+          match act with
+          | Shift_out -> true
+          | _ -> false
+        in
+        if stuffing && (stuff_now || is_shift)
+        then (
+          m.stuff_run
+          <- (if can_style
+              then if Bool.equal tx_bit m.stuff_last then (m.stuff_run + 1) land 7 else 1
+              else if tx_bit
+              then (m.stuff_run + 1) land 7
+              else 0);
+          m.stuff_last <- tx_bit);
+        if is_shift && not stuff_now
+        then (
+          m.osr <- (m.osr lsl 1) land 0xFFFF_FFFF;
+          if m.crc_feed then m.crc <- crc_next m data_bit);
         (match act with
          | Sample | Aux0 | Aux1 -> ()
          | _ -> if clk_pin then m.shadow_clk <- value else m.shadow_data <- value);
-        advance ())
+        if not stuff_now then advance ())
     | Dly { dt } ->
       if not m.far
       then (
@@ -321,13 +385,37 @@ let lane_step m ~c ~synced =
        | K1 -> m.k.(1) <- sext8 imm
        | K2 -> m.k.(2) <- sext8 imm
        | K3 -> m.k.(3) <- sext8 imm
-       | Coder_mode -> m.coder <- imm land 0xF
+       | Coder_mode ->
+         m.coder <- imm land 0x3F;
+         m.stuff_run <- 0;
+         m.stuff_last <- false
        | Prescale -> m.prescale <- imm land 3
        | X_hi -> m.x <- ((imm land 0xFF) lsl 8) lor (m.x land 0xFF)
        | Y_hi -> m.y <- ((imm land 0xFF) lsl 8) lor (m.y land 0xFF)
        | Pin_dir -> ());
       advance ()
-    | Nop | Mov _ | Push _ | Crc _ | Sync _ | Cap _ -> advance ());
+    | Crc cmd ->
+      (match cmd with
+       | Reset ->
+         m.crc_poly <- (m.osr lsr 16) land 0xFFFF;
+         m.crc_wm1 <- (m.osr lsr 12) land 15;
+         m.crc_inv <- m.osr land (1 lsl 10) <> 0;
+         m.crc <- (if m.osr land (1 lsl 11) <> 0 then crc_mask m.crc_wm1 else 0);
+         m.crc_feed <- false;
+         m.crc_corrupt <- false
+       | Feed_tx -> m.crc_feed <- true
+       | Arm_corrupt -> m.crc_corrupt <- true
+       | Load_osr ->
+         let mask = crc_mask m.crc_wm1 in
+         let out =
+           (m.crc lxor (if m.crc_inv then mask else 0) lxor if m.crc_corrupt then 1 else 0) land mask
+         in
+         m.osr <- (out lsl (15 - m.crc_wm1)) lsl 16;
+         m.crc_feed <- false;
+         m.crc_corrupt <- false
+       | Feed_rx -> ());
+      advance ()
+    | Nop | Mov _ | Push _ | Sync _ | Cap _ -> advance ());
   m.wcnt <- (if !watching then (m.wcnt + 1) land 0xFFFF else 0);
   m.far <- far_next;
   (* --- queue update: accept the new entry (checks as in the RTL) --- *)

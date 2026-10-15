@@ -19,6 +19,7 @@
      jmp   x--|y--|flag|pin|osr_empty|isr_full|cap_ready, TARGET
      set   x|y|x_hi|y_hi|k1|k2|k3|coder|pindir|prescale, VALUE
            coder VALUE may be names joined by '|': nrz nrzi manchester invert opendrain
+             stuff_usb stuff_can
            prescale VALUE may be x1 x4 x16 x64
      mov   DST, SRC                  x y osr isr crc cap
      pull [noblock]   push [noblock]
@@ -83,7 +84,8 @@ let crc_names =
 
 let cap_names = Isa.Cap_cmd.[ On, "on"; Off, "off"; Marker, "marker" ]
 let wpin_names = Isa.Wait_pin.[ In, "in"; Data, "data"; Clk, "clk"; Aux, "aux" ]
-let coder_flags = [ "nrz", 0; "nrzi", 1; "manchester", 2; "invert", 4; "opendrain", 8 ]
+let coder_flags =
+  [ "nrz", 0; "nrzi", 1; "manchester", 2; "invert", 4; "opendrain", 8; "stuff_usb", 16; "stuff_can", 48 ]
 let prescale_names = [ "x1", 0; "x4", 1; "x16", 2; "x64", 3 ]
 let name_of l v ~equal = List.find_map_exn l ~f:(fun (k, n) -> if equal k v then Some n else None)
 
@@ -345,12 +347,17 @@ let assemble_with_labels ?allow_reserved src =
 (* --- disassembling ---------------------------------------------------------- *)
 
 let coder_string v =
-  if v > 15 || v land 3 = 3
+  (* names where they exist; a stuffing style without stuffing enabled, or
+     reserved bits, print as a number (which assembles back to the same) *)
+  if v > 63 || v land 3 = 3 || v land 48 = 32
   then Int.to_string v
   else (
     let base = name_of [ 0, "nrz"; 1, "nrzi"; 2, "manchester" ] (v land 3) ~equal:Int.equal in
     let flags = List.filter [ 4, "invert"; 8, "opendrain" ] ~f:(fun (b, _) -> v land b <> 0) in
-    String.concat ~sep:"|" (base :: List.map flags ~f:snd))
+    let stuff =
+      if v land 48 = 48 then [ "stuff_can" ] else if v land 16 <> 0 then [ "stuff_usb" ] else []
+    in
+    String.concat ~sep:"|" ((base :: List.map flags ~f:snd) @ stuff))
 ;;
 
 let instr_string ~label_of ~addr (i : Isa.t) =

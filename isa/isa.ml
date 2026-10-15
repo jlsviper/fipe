@@ -14,15 +14,26 @@ struct
   let of_int i = List.nth X.all_in_order i
 end
 
-(* Coder mode register (SET Coder_mode imm). Bits [1:0] select the line code;
-   bit 2 inverts; bit 3 selects open-drain output, where a 1 bit releases the
-   pin (pulled high externally) instead of driving it, as I2C requires. *)
+(* Coder mode register (SET Coder_mode imm), applied to Shift_out events.
+   Bits [1:0] select the line code: 0 NRZ; 1 NRZI (a 0 bit toggles the line, a
+   1 holds it, as USB); 2 Manchester and 3 are reserved and trap. Bit 2
+   inverts (no effect under NRZI, which encodes transitions). Bit 3 selects
+   open-drain output, where a 1 releases the pin instead of driving it, as I2C
+   requires. Bit 4 enables bit stuffing and bit 5 picks its style: 0, USB (a 0
+   after six 1s); 1, CAN (the complement after five equal bits). A due stuff
+   bit is sent by the next event on the data pin of any kind (shift, drive,
+   release, toggle), which then executes again one period later: firmware
+   counts only data bits, and a stuff bit owed after a packet's last bits
+   still precedes its end. Stuffed bits never feed the CRC. Writing the coder mode restarts the
+   stuffing count. Bits [7:6] must be zero. *)
 module Coder_mode = struct
   let nrz = 0
   let nrzi = 1
   let manchester = 2
   let invert = 4
   let open_drain = 8
+  let stuff_usb = 16
+  let stuff_can = 48
 end
 
 module Act = struct
@@ -113,6 +124,16 @@ module Loc = struct
   include Indexed (T)
 end
 
+(* CRC commands. The CRC unit is a serial LFSR over transmitted data bits, in
+   wire order (stuffed bits excluded), of programmable width (1 to 16) and
+   polynomial. Reset: configure from the OSR (polynomial [31:16], width - 1
+   [15:12], all-ones initial value [11], inverted output [10]) and clear (or
+   set) the register; feeding stops. Feed_tx: from now on, every real data bit
+   a Shift_out sends updates the CRC. Load_osr: stop feeding, and load the
+   remainder (inverted if configured) left-aligned into the OSR, to be sent by
+   Shift_out. Arm_corrupt: the next Load_osr flips the remainder's last bit, a
+   deliberate CRC error for testing receivers. Feed_rx (receive side) is
+   reserved. *)
 module Crc_cmd = struct
   module T = struct
     type t =
@@ -309,9 +330,14 @@ let encode t =
    reserved, and the sequencer traps on them (halts, TRAP flag) rather than
    silently doing nothing. The assembler refuses them unless asked. *)
 let implemented = function
-  | Mov _ | Push _ | Crc _ | Sync _ | Cap _ -> false
+  | Mov _ | Push _ | Sync _ | Cap _ -> false
   | Pull { block } -> block (* a non-blocking PULL is not built *)
   | Set { dst = Pin_dir; _ } -> false
+  | Set { dst = Coder_mode; imm } ->
+    (* NRZ or NRZI; Manchester and code 3 are not built; bits 7:6 zero *)
+    imm land 3 <= 1 && imm land 0xC0 = 0
+  | Crc Feed_rx -> false (* the receive-side CRC is not built *)
+  | Crc (Feed_tx | Reset | Load_osr | Arm_corrupt) -> true
   | Jmp { cond = Osr_empty | Isr_full | Cap_ready; _ } -> false
   | Nop | Evt _ | Dly _ | Wait _ | Jmp _ | Set _ -> true
 ;;

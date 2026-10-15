@@ -26,8 +26,9 @@ shows the address.
 Programs are written in FIPE assembly (`examples/*.s`, assembled by `fasm`). Example programs:
 I2C (EEPROM write with ACK polling; controller and target on one chip), SPI (READ ID, with
 normal and late sampling), UART (echo, 115200 baud; full duplex on two sequencers), open-drain
-rise time, and four protocols the chip was not designed for: WS2812 LEDs, 1-Wire (READ ROM),
-JTAG (IDCODE) and SWD (debug-port ID read, acknowledge decoded on-chip).
+rise time, low-speed USB and CAN transmit (NRZI, bit stuffing and CRC in the chip's coding
+stage), and four protocols the chip was not designed for: WS2812 LEDs, 1-Wire (READ ROM), JTAG
+(IDCODE) and SWD (debug-port ID read, acknowledge decoded on-chip).
 
 ## How to test
 

@@ -29,6 +29,20 @@ The architecture spec is the source of design intent; this repo implements it.
 
 ## Status
 
+**The coding stage (chip change: needs a GDS run).** NRZI line coding, bit stuffing (USB style,
+a 0 after six 1s; CAN style, the complement after five equal bits) and a programmable CRC unit
+(any polynomial, width 1 to 16) in each sequencer's shift path. A due stuff bit goes out before
+the next data-pin event, which then executes again: firmware counts only data bits, and a stuff
+bit owed after a packet's last bits still precedes its end. `crc arm_corrupt` flips a bit of the
+next CRC sent, for testing receivers. Demonstrated, each judged by an independent receiver model
+and identical on the RTL and the cycle-accurate simulator: a low-speed USB DATA0 packet, the two
+sequencers driving D+ and D- as a differential pair (`examples/usb_ls_data.s`; CRC conventions
+checked against the real SETUP packet `2D 00 10`), and a CAN 2.0A data frame acknowledged by the
+receiver (`examples/can_frame.s`); with a corrupted CRC, the USB receiver rejects the packet and
+the CAN receiver withholds its ACK, which FIPE reads back. 200 random coding-stage programs match
+between RTL and simulator. `set coder, nrzi` was accepted and silently ignored before; NRZI now
+works, and Manchester traps until built.
+
 **Batch B (firmware only: no chip change).** Controller and target on one chip: sequencer A is an
 I2C controller and sequencer B an I2C target on separate pins joined outside the chip, a real
 wired-AND bus (`examples/i2c_controller_target.s`); the target receives `A0 00 5A` and

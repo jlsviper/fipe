@@ -501,5 +501,68 @@ let%expect_test "traps: reserved instructions halt both models at the same cycle
     !trapped_b;
   [%expect {|
     100 of 100 program pairs identical (fires, samples, flags, pins every cycle, trap and stop address)
-    A trapped in 45, B in 46 (the rest jumped past the planted instruction or halted first) |}]
+    A trapped in 54, B in 56 (the rest jumped past the planted instruction or halted first) |}]
+;;
+
+(* ---- the coding stage: NRZI, bit stuffing, CRC -------------------------------- *)
+
+let gen_coding rand =
+  let ri n = Random.State.int rand n in
+  let len = 8 + ri 24 in
+  (* coder settings this revision implements: NRZ or NRZI, any of invert,
+     open-drain, stuffing and its style *)
+  let coder () = (ri 2) lor (ri 2 * 4) lor (ri 2 * 8) lor (ri 2 * 16) lor (ri 2 * 32) in
+  Array.init (len + 1) ~f:(fun a ->
+    if a = len
+    then Isa.Jmp { cond = Always; addr = a }
+    else (
+      let r = ri 100 in
+      if r < 40
+      then
+        Isa.Evt
+          { dt = 1 + ri 20
+          ; clk_pin = ri 8 = 0
+          ; cls = ri 4
+          ; act = [| Isa.Act.Shift_out; Shift_out; Shift_out; Toggle; Drive0; Drive1; Release; Sample |].(ri 8)
+          }
+      else if r < 48
+      then Set { dst = Coder_mode; imm = coder () }
+      else if r < 56
+      then Pull { block = true }
+      else if r < 72
+      then Crc ([| Isa.Crc_cmd.Reset; Feed_tx; Load_osr; Arm_corrupt |].(ri 4))
+      else if r < 80
+      then Set { dst = (if ri 2 = 0 then X else Y); imm = ri 20 }
+      else if r < 92 && a > 0
+      then Jmp { cond = [| Isa.Cond.X_dec_nz; Y_dec_nz; Always |].(ri 3); addr = (if ri 3 = 0 then a + 1 + ri (len - a) else ri a) }
+      else Dly { dt = ri 30 }))
+;;
+
+let%expect_test "coding stage: simulator matches the RTL on random NRZI, stuffing and CRC programs" =
+  let rand = Random.State.make [| 44 |] in
+  let cycles = 3_000 and n = 200 in
+  let same = ref 0 and stuffed = ref 0 and shifts = ref 0 in
+  for _ = 1 to n do
+    let program = gen_coding rand in
+    let stim = stimulus rand ~cycles in
+    (* random CRC configurations and data in the FIFO *)
+    let fifo = List.init 40 ~f:(fun _ -> Random.State.bits rand land 0xFFFF_FFFF lor (Random.State.int rand 4 lsl 30)) in
+    let cfg = { C.Isim.default_config with data_pin = 0; clk_pin = 1; in_pin = 2; aux_pin = 3 } in
+    let r = rtl ~cfg ~stim ~fifo ~cycles program in
+    let m = model ~cfg ~stim ~fifo ~cycles program in
+    shifts := !shifts + List.length r.fires;
+    if equal_obs r m then Int.incr same
+    else if !same + 3 > n then ()
+    else print_s [%message "DIFFERS" (List.length r.fires : int) (List.length m.fires : int)];
+    (* count programs whose output really exercised stuffing *)
+    if Array.exists program ~f:(function Isa.Set { dst = Coder_mode; imm } -> imm land 16 <> 0 | _ -> false)
+    then Int.incr stuffed
+  done;
+  printf
+    "%d of %d random programs identical (every fire's pin, value and time, samples, flags); %d fires compared; %d programs enable stuffing\n"
+    !same
+    n
+    !shifts
+    !stuffed;
+  [%expect {| 200 of 200 random programs identical (every fire's pin, value and time, samples, flags); 17450 fires compared; 97 programs enable stuffing |}]
 ;;

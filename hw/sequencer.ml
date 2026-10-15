@@ -141,11 +141,26 @@ let executable w =
         | None -> false)
       &: only [ F.jmp_cond; F.jmp_addr ]
     ; op_is Isa.Opcode.set
-      &: any_of F.set_dst (fun k ->
-        match Isa.Set_dst.of_int k with
-        | Some dst -> impl (Set { dst; imm = 0 })
-        | None -> false)
+      &: (List.init (1 lsl F.set_dst.width) ~f:Fn.id
+          |> List.filter_map ~f:(fun k ->
+            match Isa.Set_dst.of_int k with
+            | None -> None
+            | Some dst ->
+              (* the immediates this destination accepts (all, for most) *)
+              let ok = List.init (1 lsl F.set_imm.width) ~f:(fun v -> impl (Set { dst; imm = v })) in
+              if List.for_all ok ~f:Fn.id
+              then Some (fld F.set_dst ==:. k)
+              else if List.exists ok ~f:Fn.id
+              then Some (fld F.set_dst ==:. k &: any_of F.set_imm (fun v -> List.nth_exn ok v))
+              else None)
+          |> List.fold ~init:gnd ~f:( |: ))
       &: only [ F.set_dst; F.set_imm ]
+    ; op_is Isa.Opcode.crc
+      &: any_of F.crc_cmd (fun k ->
+        match Isa.Crc_cmd.of_int k with
+        | Some c -> impl (Crc c)
+        | None -> false)
+      &: only [ F.crc_cmd ]
     ; op_is Isa.Opcode.pullpush
       &: any_of F.pp_push (fun k -> impl (if k = 1 then Push { block = true } else Pull { block = true }))
       &: any_of F.pp_block (fun k -> impl (Pull { block = k = 1 }))
@@ -165,7 +180,15 @@ let create ?(name = "seq") (i : _ I.t) : _ O.t =
   and x = reg 16
   and y = reg 16
   and osr = reg 32
-  and coder = reg 4
+  and coder = reg 6
+  and stuff_run = reg 3 (* length of the current run, for bit stuffing *)
+  and stuff_last = reg 1 (* the last bit sent through the stuffer *)
+  and crc = reg 16
+  and crc_poly = reg 16
+  and crc_wm1 = reg 4 (* width - 1 *)
+  and crc_inv = reg 1
+  and crc_feed = reg 1
+  and crc_corrupt = reg 1
   and prescale = reg 2
   and k1 = reg 8
   and k2 = reg 8
@@ -180,7 +203,9 @@ let create ?(name = "seq") (i : _ I.t) : _ O.t =
   (* readable names in the generated Verilog *)
   List.iter
     [ "ir_pc", pc; "ir", ir; "far", far; "caught_up", cu; "sched_s", s; "x", x; "y", y
-    ; "osr", osr; "coder", coder; "prescale", prescale; "k1", k1; "k2", k2; "k3", k3
+    ; "osr", osr; "coder", coder; "stuff_run", stuff_run; "stuff_last", stuff_last
+    ; "crc", crc; "crc_poly", crc_poly; "crc_width_m1", crc_wm1; "crc_inv", crc_inv
+    ; "crc_feed", crc_feed; "crc_corrupt", crc_corrupt; "prescale", prescale; "k1", k1; "k2", k2; "k3", k3
     ; "shadow_data", shadow_data; "shadow_clk", shadow_clk; "running", running
     ; "halted", halted; "trapped", trapped; "flag", flag; "wait_count", wcnt
     ]
@@ -220,22 +245,66 @@ let create ?(name = "seq") (i : _ I.t) : _ O.t =
   let act = f Isa.Field.evt_act in
   let open_drain = bit coder.value 3 in
   let invert = bit coder.value 2 in
+  let nrzi = bit coder.value 0 in
+  let stuffing = bit coder.value 4 in
+  let can_style = bit coder.value 5 in
+  (* bit stuffing: USB, a 0 after six 1s; CAN, the complement after five
+     equal bits. A due stuff bit is sent by the Shift_out instruction, which
+     then executes again for the real bit. *)
+  let stuff_due =
+    stuffing &: mux2 can_style (stuff_run.value ==:. 5) (stuff_run.value ==:. 6)
+  in
+  let stuff_bit = can_style &: ~:(stuff_last.value) in
+  let data_bit = msb osr.value in
   let high = mux2 open_drain (of_int ~width:2 Value.release) (of_int ~width:2 Value.drive1) in
   let lo = of_int ~width:2 Value.drive0 in
   let shadow = mux2 tgt_clk shadow_clk.value shadow_data.value in
   let act_is a = act ==:. Isa.Act.to_int a in
+  (* a line bit through the coder. NRZI: a 0 toggles the line, a 1 holds it
+     (invert cannot matter: only transitions carry the data) *)
+  let coded b =
+    mux2 (mux2 nrzi (mux2 b (shadow <>:. Value.drive0) (shadow ==:. Value.drive0)) (b ^: invert)) high lo
+  in
+  (* A due stuff bit goes out before the next event on the data pin of any
+     kind (shift, drive, release, toggle), which then executes again: so a
+     stuff bit owed after a packet's last bits still precedes its end. *)
+  let data_pin_event =
+    ~:tgt_clk
+    &: (act_is Shift_out |: act_is Drive0 |: act_is Drive1 |: act_is Release |: act_is Toggle)
+  in
+  let stuff_now = stuff_due &: data_pin_event in
+  let tx_bit = mux2 stuff_now stuff_bit data_bit in
   let value =
     priority_select_with_default
       ~default:lo
       [ { With_valid.valid = act_is Drive1; value = of_int ~width:2 Value.drive1 }
       ; { valid = act_is Release; value = of_int ~width:2 Value.release }
       ; { valid = act_is Toggle; value = mux2 (shadow ==:. Value.drive0) high lo }
-      ; { valid = act_is Shift_out; value = mux2 (msb osr.value ^: invert) high lo }
+      ; { valid = act_is Shift_out; value = coded data_bit }
       ; { valid = act_is Sample; value = of_int ~width:2 Value.sample }
       ; { valid = act_is Aux1; value = of_int ~width:2 Value.drive1 }
       ]
+    |> mux2 stuff_now (coded stuff_bit)
   in
+  (* CRC: a serial LFSR of width 1..16 over the data bits sent *)
+  (* bit j of the mask is set when j <= width - 1 (comparisons, not a table of
+     constants: a constant mux becomes a ROM, which the SAT-based proofs and
+     equivalence check cannot import) *)
+  let crc_mask wm1 = concat_lsb (List.init 16 ~f:(fun j -> wm1 >=:. j)) in
+  let mask = crc_mask crc_wm1.value in
+  let crc_top = mux crc_wm1.value (bits_lsb crc.value) in
+  let crc_next =
+    (sll crc.value 1 ^: mux2 (crc_top ^: data_bit) crc_poly.value (zero 16)) &: mask
+  in
+  let crc_out =
+    (crc.value ^: mux2 crc_inv.value mask (zero 16) ^: uresize crc_corrupt.value 16) &: mask
+  in
+  (* left-aligned in 16 bits: shift by 16 - width *)
+  let crc_aligned = mux crc_wm1.value (List.init 16 ~f:(fun k -> sll crc_out (15 - k))) in
+  let crc_is c = is Isa.Opcode.crc &: (f Isa.Field.crc_cmd ==:. Isa.Crc_cmd.to_int c) in
   let evt_go = running.value &: is Isa.Opcode.evt &: i.q_ready &: lead_ok s_evt in
+  (* a stuff pass enqueues the stuff bit but does not advance the program *)
+  let stuff_pass = evt_go &: stuff_now in
   (* DLY *)
   let s_dly = s.value +: scale (t24 (f Isa.Field.dly_dt)) in
   let dly_go = running.value &: is Isa.Opcode.dly &: lead_ok s_dly in
@@ -330,6 +399,10 @@ let create ?(name = "seq") (i : _ I.t) : _ O.t =
         ; y <--. 0
         ; osr <--. 0
         ; coder <--. 0
+        ; stuff_run <--. 0
+        ; stuff_last <--. 0
+        ; crc_feed <--. 0
+        ; crc_corrupt <--. 0
         ; prescale <--. 0
         ; k1 <-- i.cfg_k1
         ; k2 <-- i.cfg_k2
@@ -344,13 +417,23 @@ let create ?(name = "seq") (i : _ I.t) : _ O.t =
         ; when_ trap_now [ running <-- gnd; halted <-- vdd; trapped <-- vdd ]
         ; when_
             step
-            [ pc <-- next_addr
-            ; ir <-- i.fetch_data
+            [ when_ ~:stuff_pass [ pc <-- next_addr; ir <-- i.fetch_data ]
             ; when_ evt_go
                 [ s <-- s_evt
+                ; (* the stuffer counts every bit it sends: stuff bits, and the
+                     data bits of Shift_out *)
+                  when_
+                    (stuffing &: (stuff_now |: act_is Shift_out))
+                    [ stuff_last <-- tx_bit
+                    ; stuff_run
+                      <-- mux2
+                            can_style
+                            (mux2 (tx_bit ==: stuff_last.value) (stuff_run.value +:. 1) (of_int ~width:3 1))
+                            (mux2 tx_bit (stuff_run.value +:. 1) (zero 3))
+                    ]
                 ; when_
-                    (act_is Shift_out)
-                    [ osr <-- sll osr.value 1 ]
+                    (act_is Shift_out &: ~:stuff_now)
+                    [ osr <-- sll osr.value 1; when_ crc_feed.value [ crc <-- crc_next ] ]
                 ; when_
                     ~:(act_is Sample |: act_is Aux0 |: act_is Aux1)
                     [ if_ tgt_clk [ shadow_clk <-- value ] [ shadow_data <-- value ] ]
@@ -365,7 +448,19 @@ let create ?(name = "seq") (i : _ I.t) : _ O.t =
             ; when_ (set_to K1) [ k1 <-- imm ]
             ; when_ (set_to K2) [ k2 <-- imm ]
             ; when_ (set_to K3) [ k3 <-- imm ]
-            ; when_ (set_to Coder_mode) [ coder <-- select imm 3 0 ]
+            ; when_ (set_to Coder_mode) [ coder <-- select imm 5 0; stuff_run <--. 0; stuff_last <--. 0 ]
+            ; when_ (crc_is Reset)
+                [ crc_poly <-- select osr.value 31 16
+                ; crc_wm1 <-- select osr.value 15 12
+                ; crc_inv <-- bit osr.value 10
+                ; crc <-- mux2 (bit osr.value 11) (crc_mask (select osr.value 15 12)) (zero 16)
+                ; crc_feed <--. 0
+                ; crc_corrupt <--. 0
+                ]
+            ; when_ (crc_is Feed_tx) [ crc_feed <--. 1 ]
+            ; when_ (crc_is Arm_corrupt) [ crc_corrupt <--. 1 ]
+            ; when_ (crc_is Load_osr)
+                [ osr <-- crc_aligned @: zero 16; crc_feed <--. 0; crc_corrupt <--. 0 ]
             ; when_ (set_to Prescale) [ prescale <-- select imm 1 0 ]
             ; when_ (set_to X_hi) [ x <-- imm @: select x.value 7 0 ]
             ; when_ (set_to Y_hi) [ y <-- imm @: select y.value 7 0 ]

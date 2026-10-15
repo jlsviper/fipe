@@ -16,7 +16,7 @@ find the evidence in this repository. Gaps are listed as gaps.
 | Standard settings: common UART baud rates | Met | Bit periods exact to one 20 ns cycle (115,200 baud is 434 cycles), tested at 115,200. |
 | Standard settings: SPI modes 0 to 3 | Met | Frequency-by-mode sweeps cover all four modes (`tests/test_spi.ml`). |
 | Standard settings: I2C at 100 and 400 kHz | Partial | 100 kHz (standard mode) is implemented and characterized; 400 kHz (fast mode) is not yet demonstrated. |
-| Stretch: low-speed USB, 10 Mbit Ethernet | Not attempted | Deliberately out of scope; depth over breadth. |
+| Stretch: low-speed USB, 10 Mbit Ethernet | Partial | Low-speed USB transmit with the chip doing the line coding: NRZI, bit stuffing and CRC16 in hardware, the two sequencers driving D+ and D- as an exact differential pair (`examples/usb_ls_data.s`); an independent receiver model (its own clock recovery) accepts the packets, including one that owes a stuff bit after its last CRC bit, and rejects a deliberately corrupted CRC. Not built: USB receive (clock recovery in hardware) and enumeration; Ethernet (at 50 MHz a 10 Mbit/s Manchester half-bit is 2.5 cycles). |
 | Other protocols worth considering: JTAG, SWD, PS/2, CAN | Partial | JTAG demonstrated (IDCODE). 1-Wire and WS2812 also demonstrated. |
 | Running protocols concurrently; controller and target roles | Met | Two sequencers on one shared time base. Full-duplex UART (`examples/uart_full_duplex.s`: B receives each echo while A transmits the next byte, 9.8 of 10 bits overlapping). Controller and target on one chip (`examples/i2c_controller_target.s`): A is an I2C controller on pins 0 and 1, B an I2C target on pins 2 and 3, joined outside the chip as a wired-AND bus; the target receives every byte and acknowledges. The target acknowledges every address (no compare instruction); the host checks the address byte. |
 | Use rst_n to reach a known state; reload after reselection | Met | `rst_n` passes a two-flop synchronizer; the host reloads programs (`docs/info.md`). |
@@ -38,12 +38,16 @@ find the evidence in this repository. Gaps are listed as gaps.
 
 **Flexibility.** Protocols are programs on one engine. Four protocols the chip was not designed
 for (WS2812, 1-Wire, JTAG and SWD) run from assembly alone, each verified against a device
-model on the RTL; so does the target side of I2C. Because every protocol lowers to the same timed
+model on the RTL; so does the target side of I2C. A programmable coding stage (NRZI, bit
+stuffing in USB or CAN style, a CRC unit of any polynomial and width up to 16) adds protocols
+whose framing the chip performs itself: low-speed USB and CAN transmit, each accepted by an
+independent receiver model. Because every protocol lowers to the same timed
 events, every protocol also inherits the same fault injection (skew classes) and measurement
 tools without protocol-specific hardware.
 
 **Protocols demonstrated.** UART (including full duplex on two sequencers), SPI (modes 0 to 3,
-with late sampling), I2C (controller, and target on the second sequencer), WS2812, 1-Wire, JTAG,
+with late sampling), I2C (controller, and target on the second sequencer), low-speed USB
+(transmit), CAN 2.0A (data frames, acknowledged by a receiver model), WS2812, 1-Wire, JTAG,
 SWD (line reset and a debug-port ID read, with the acknowledge decoded on-chip by branching on
 the pin: OK, WAIT, FAULT and no answer each take their own path).
 
@@ -83,8 +87,8 @@ to 5.4 s.
   random programs with random pin roles, skews, monitor setups and input waveforms, and
   must reproduce the RTL's output record exactly; CI runs it on every GDS build.
 - **No silent instructions.** The ISA is defined ahead of the hardware (a roadmap in code), so
-  "legal" and "working" are kept distinct: of the 12,110 legal encodings, 10,842 execute and
-  1,268 are reserved. A reserved or illegal word halts its sequencer with the TRAP flag, and the
+  "legal" and "working" are kept distinct: of the 12,110 legal encodings, 10,622 execute and
+  1,488 are reserved (including coder settings for line codes not yet built). A reserved or illegal word halts its sequencer with the TRAP flag, and the
   debug program counter shows where; the assembler refuses reserved instructions unless asked.
   The hardware's check agrees with the ISA's decoder on all 65,536 words.
 - **Power-up state does not matter.** Every register powered up to random values (two seeds):
@@ -105,6 +109,8 @@ to 5.4 s.
 - Device-side attribution is exact for falling edges and for pins FIPE never drives; on an
   open-drain line, a rising edge may also be the line recovering from FIPE's own release.
 - Sequencer B runs from the upper half of program memory (32 words).
+- The coding stage is transmit-side: no receive-side CRC or clock recovery yet; Manchester
+  coding is reserved (it traps); CAN arbitration is not demonstrated.
 - Two sequencers share eight pins; if both change one pin in the same cycle, A wins and
   CONFLICT is flagged.
 - I/O pad timing for CMOS5L is uncharacterized (no silicon data exists yet for anyone).
