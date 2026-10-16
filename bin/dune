@@ -9,3 +9,7 @@
 (executable
  (name gen_regress)
  (libraries base stdio fipe_isa))
+
+(executable
+ (name trial)
+ (libraries base stdio fipe_bench fipe_checker fipe_model fipe_spec))
