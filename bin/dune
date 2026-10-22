@@ -1,15 +1,19 @@
 (executable
  (name gen_verilog)
+ (modules gen_verilog)
  (libraries base stdio hardcaml fipe_hw))
 
 (executable
  (name fasm)
+ (modules fasm)
  (libraries base stdio fipe_asm))
 
 (executable
  (name gen_regress)
+ (modules gen_regress)
  (libraries base stdio fipe_isa))
 
 (executable
  (name trial)
+ (modules trial)
  (libraries base stdio fipe_bench fipe_checker fipe_model fipe_spec))
